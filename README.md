@@ -62,6 +62,26 @@ Override with the `VECTOR_MEMORY_DATA_PATH` environment variable:
 
 Set `VECTOR_MEMORY_DATA_PATH=none` to disable persistence and run fully in-memory.
 
+### TTL (Time-to-Live)
+
+Optionally auto-expire old entries by setting the `VECTOR_MEMORY_TTL_MINUTES` environment variable:
+
+```json
+{
+  "mcpServers": {
+    "vector-memory": {
+      "command": "dotnet",
+      "args": ["run", "--project", "/absolute/path/to/src/McpVectorMemory"],
+      "env": {
+        "VECTOR_MEMORY_TTL_MINUTES": "1440"
+      }
+    }
+  }
+}
+```
+
+Expired entries are excluded from search results and purged on the next mutation (upsert or delete). If not set, entries never expire.
+
 ## Tools
 
 ### `store_memory`
@@ -75,6 +95,14 @@ Store a vector embedding together with its text and optional metadata. If an ent
 | `text`     | `string`            | no       | The original text the vector was derived from |
 | `metadata` | `object<string,string>` | no  | Arbitrary key-value metadata |
 
+### `store_memories`
+
+Store multiple vector embeddings in a single batch operation. More efficient than calling `store_memory` in a loop — acquires the write lock once and persists once.
+
+| Parameter  | Type              | Required | Description |
+|------------|-------------------|----------|-------------|
+| `entries`  | `MemoryInput[]`   | yes      | Array of entries, each with `id`, `vector`, and optionally `text` and `metadata` |
+
 ### `search_memory`
 
 Find the most similar stored memories for a query vector using cosine similarity.
@@ -84,8 +112,9 @@ Find the most similar stored memories for a query vector using cosine similarity
 | `vector`   | `float[]`| yes      | —       | The query embedding vector |
 | `k`        | `int`    | no       | `5`     | Maximum number of results |
 | `minScore` | `float`  | no       | `0`     | Minimum cosine-similarity threshold (-1 to 1) |
+| `offset`   | `int`    | no       | `0`     | Number of top results to skip (for pagination) |
 
-Returns an array of results, each containing the matched entry (`id`, `text`, `metadata`) and its `score`.
+Returns an array of results, each containing the matched entry (`id`, `text`, `metadata`) and its `score`. Use `offset` to paginate through results — e.g., `offset=5, k=5` returns results 6-10.
 
 ### `delete_memory`
 
@@ -94,6 +123,14 @@ Delete a stored memory entry by its unique identifier.
 | Parameter | Type     | Required | Description |
 |-----------|----------|----------|-------------|
 | `id`      | `string` | yes      | The identifier of the entry to delete |
+
+### `delete_memories`
+
+Delete multiple stored memory entries in a single batch operation.
+
+| Parameter | Type       | Required | Description |
+|-----------|------------|----------|-------------|
+| `ids`     | `string[]` | yes      | Array of entry identifiers to delete |
 
 ## Architecture
 
@@ -106,7 +143,7 @@ VectorMath.cs           → SIMD-accelerated dot product, norm, cosine similarit
 IndexPersistence.cs     → JSON serialization for durable storage
 IndexStatistics.cs      → Diagnostics snapshot (entry counts, dimensions, state)
 SearchResult.cs         → Search result DTO (entry + cosine similarity score)
-VectorMemoryTools.cs    → MCP tool definitions (store, search, delete)
+VectorMemoryTools.cs    → MCP tool definitions (store, search, delete, bulk ops)
 ```
 
 - **HNSW index** — Search uses a Hierarchical Navigable Small World graph (O(log n) per query) instead of brute-force linear scan. Separate graphs are maintained per vector dimension.
@@ -132,7 +169,7 @@ These can be tuned via the `VectorIndex` constructor for advanced use cases.
 
 Entries are **soft-deleted** from the HNSW graph when removed or replaced — the node is flagged but stays in the graph to preserve connectivity for ongoing searches. When the number of soft-deleted nodes exceeds the live entry count (minimum 100), the graph is **rebuilt from scratch** automatically during the next mutation. This ensures optimal graph quality without manual intervention.
 
-Search effort (`ef`) is automatically tuned as `max(k * 2, efSearch)` — no manual adjustment is needed.
+Search effort (`ef`) is automatically tuned as `max((offset + k) * 2, efSearch)` — no manual adjustment is needed.
 
 ### Persistence Crash Safety
 

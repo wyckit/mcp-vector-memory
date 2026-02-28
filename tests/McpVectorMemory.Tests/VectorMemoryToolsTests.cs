@@ -127,6 +127,88 @@ public class VectorMemoryToolsTests
         Assert.Contains("not found", result);
     }
 
+    // ── StoreMemories (bulk) ────────────────────────────────────────────────
+
+    [Fact]
+    public void StoreMemories_MultipleEntries_Stores()
+    {
+        var entries = new[]
+        {
+            new MemoryInput { Id = "a", Vector = new float[] { 1f, 0f }, Text = "alpha" },
+            new MemoryInput { Id = "b", Vector = new float[] { 0f, 1f }, Text = "beta" },
+        };
+        string result = _tools.StoreMemories(entries);
+        Assert.Contains("2", result);
+        Assert.Equal(2, _index.Count);
+    }
+
+    [Fact]
+    public void StoreMemories_EmptyArray_ReturnsError()
+    {
+        string result = _tools.StoreMemories(Array.Empty<MemoryInput>());
+        Assert.StartsWith("Error:", result);
+    }
+
+    [Fact]
+    public void StoreMemories_NullArray_ReturnsError()
+    {
+        string result = _tools.StoreMemories(null!);
+        Assert.StartsWith("Error:", result);
+    }
+
+    [Fact]
+    public void StoreMemories_InvalidEntry_ReturnsError()
+    {
+        var entries = new[]
+        {
+            new MemoryInput { Id = "", Vector = new float[] { 1f } }, // invalid: empty id
+        };
+        string result = _tools.StoreMemories(entries);
+        Assert.StartsWith("Error:", result);
+    }
+
+    // ── DeleteMemories (bulk) ────────────────────────────────────────────────
+
+    [Fact]
+    public void DeleteMemories_RemovesEntries()
+    {
+        _tools.StoreMemory("a", new float[] { 1f, 0f });
+        _tools.StoreMemory("b", new float[] { 0f, 1f });
+        _tools.StoreMemory("c", new float[] { 0.7071f, 0.7071f });
+
+        string result = _tools.DeleteMemories(new[] { "a", "c" });
+        Assert.Contains("2 of 3", result);
+        Assert.Equal(1, _index.Count);
+    }
+
+    [Fact]
+    public void DeleteMemories_EmptyArray_ReturnsError()
+    {
+        string result = _tools.DeleteMemories(Array.Empty<string>());
+        Assert.StartsWith("Error:", result);
+    }
+
+    [Fact]
+    public void DeleteMemories_NullArray_ReturnsError()
+    {
+        string result = _tools.DeleteMemories(null!);
+        Assert.StartsWith("Error:", result);
+    }
+
+    // ── SearchMemory with offset ─────────────────────────────────────────────
+
+    [Fact]
+    public void SearchMemory_WithOffset_SkipsResults()
+    {
+        _tools.StoreMemory("close", new float[] { 1f, 0.1f });
+        _tools.StoreMemory("far",   new float[] { 0f, 1f });
+
+        var result = _tools.SearchMemory(new float[] { 1f, 0f }, k: 1, offset: 1);
+        var results = Assert.IsType<SearchResult[]>(result);
+        Assert.Single(results);
+        Assert.Equal("far", results[0].Entry.Id);
+    }
+
     // ── Constructor ──────────────────────────────────────────────────────────
 
     [Fact]

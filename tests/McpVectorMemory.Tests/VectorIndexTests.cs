@@ -568,4 +568,287 @@ public class VectorIndexTests
         Assert.IsAssignableFrom<IReadOnlyDictionary<string, string>>(entry.Metadata);
         Assert.Throws<NotSupportedException>(() => ((IDictionary<string, string>)entry.Metadata)["k"] = "changed");
     }
+
+    // ── BulkUpsert ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void BulkUpsert_InsertsMultipleEntries()
+    {
+        var index = new VectorIndex();
+        var entries = new[]
+        {
+            new VectorEntry("a", new float[] { 1f, 0f }),
+            new VectorEntry("b", new float[] { 0f, 1f }),
+            new VectorEntry("c", new float[] { 0.7071f, 0.7071f }),
+        };
+
+        int count = index.BulkUpsert(entries);
+
+        Assert.Equal(3, count);
+        Assert.Equal(3, index.Count);
+    }
+
+    [Fact]
+    public void BulkUpsert_ReplacesExisting()
+    {
+        var index = new VectorIndex();
+        index.Upsert(new VectorEntry("a", new float[] { 1f, 0f }, "old"));
+
+        int count = index.BulkUpsert(new[]
+        {
+            new VectorEntry("a", new float[] { 0f, 1f }, "new"),
+            new VectorEntry("b", new float[] { 1f, 0f }),
+        });
+
+        Assert.Equal(2, count);
+        Assert.Equal(2, index.Count);
+        var results = index.Search(new float[] { 0f, 1f }, k: 1);
+        Assert.Equal("new", results[0].Entry.Text);
+    }
+
+    [Fact]
+    public void BulkUpsert_EmptyList_ReturnsZero()
+    {
+        var index = new VectorIndex();
+        Assert.Equal(0, index.BulkUpsert(Array.Empty<VectorEntry>()));
+        Assert.Equal(0, index.Count);
+    }
+
+    [Fact]
+    public void BulkUpsert_NullInput_Throws()
+    {
+        var index = new VectorIndex();
+        Assert.Throws<ArgumentNullException>(() => index.BulkUpsert(null!));
+    }
+
+    [Fact]
+    public void BulkUpsert_PersistenceRoundTrip()
+    {
+        string tempPath = Path.Combine(Path.GetTempPath(), $"hnsw_test_{Guid.NewGuid()}.json");
+        try
+        {
+            using (var index = new VectorIndex(dataPath: tempPath))
+            {
+                index.BulkUpsert(new[]
+                {
+                    new VectorEntry("a", new float[] { 1f, 0f }, "alpha"),
+                    new VectorEntry("b", new float[] { 0f, 1f }, "beta"),
+                });
+            }
+
+            using var reloaded = new VectorIndex(dataPath: tempPath);
+            Assert.Equal(2, reloaded.Count);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
+
+    // ── BulkDelete ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void BulkDelete_RemovesMultipleEntries()
+    {
+        var index = new VectorIndex();
+        index.BulkUpsert(new[]
+        {
+            new VectorEntry("a", new float[] { 1f, 0f }),
+            new VectorEntry("b", new float[] { 0f, 1f }),
+            new VectorEntry("c", new float[] { 0.7071f, 0.7071f }),
+        });
+
+        int deleted = index.BulkDelete(new[] { "a", "c" });
+
+        Assert.Equal(2, deleted);
+        Assert.Equal(1, index.Count);
+        var results = index.Search(new float[] { 0f, 1f }, k: 5);
+        Assert.Single(results);
+        Assert.Equal("b", results[0].Entry.Id);
+    }
+
+    [Fact]
+    public void BulkDelete_MixedExistingAndNonExistent()
+    {
+        var index = new VectorIndex();
+        index.Upsert(new VectorEntry("a", new float[] { 1f, 0f }));
+
+        int deleted = index.BulkDelete(new[] { "a", "missing", "also-missing" });
+
+        Assert.Equal(1, deleted);
+        Assert.Equal(0, index.Count);
+    }
+
+    [Fact]
+    public void BulkDelete_EmptyList_ReturnsZero()
+    {
+        var index = new VectorIndex();
+        Assert.Equal(0, index.BulkDelete(Array.Empty<string>()));
+    }
+
+    [Fact]
+    public void BulkDelete_NullInput_Throws()
+    {
+        var index = new VectorIndex();
+        Assert.Throws<ArgumentNullException>(() => index.BulkDelete(null!));
+    }
+
+    // ── Search Pagination ───────────────────────────────────────────────────
+
+    [Fact]
+    public void Search_OffsetZero_ReturnsFirstPage()
+    {
+        var index = new VectorIndex();
+        index.Upsert(new VectorEntry("close",  new float[] { 1f, 0.1f }));
+        index.Upsert(new VectorEntry("medium", new float[] { 0.5f, 0.5f }));
+        index.Upsert(new VectorEntry("far",    new float[] { 0f, 1f }));
+
+        var page1 = index.Search(new float[] { 1f, 0f }, k: 2, offset: 0);
+        Assert.Equal(2, page1.Count);
+        Assert.Equal("close", page1[0].Entry.Id);
+        Assert.Equal("medium", page1[1].Entry.Id);
+    }
+
+    [Fact]
+    public void Search_OffsetSkipsResults()
+    {
+        var index = new VectorIndex();
+        index.Upsert(new VectorEntry("close",  new float[] { 1f, 0.1f }));
+        index.Upsert(new VectorEntry("medium", new float[] { 0.5f, 0.5f }));
+        index.Upsert(new VectorEntry("far",    new float[] { 0f, 1f }));
+
+        var page2 = index.Search(new float[] { 1f, 0f }, k: 2, offset: 1);
+        Assert.Equal(2, page2.Count);
+        Assert.Equal("medium", page2[0].Entry.Id);
+        Assert.Equal("far", page2[1].Entry.Id);
+    }
+
+    [Fact]
+    public void Search_OffsetBeyondResults_ReturnsEmpty()
+    {
+        var index = new VectorIndex();
+        index.Upsert(new VectorEntry("a", new float[] { 1f, 0f }));
+
+        var results = index.Search(new float[] { 1f, 0f }, k: 5, offset: 10);
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public void Search_NegativeOffset_Throws()
+    {
+        var index = new VectorIndex();
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            index.Search(new float[] { 1f, 0f }, k: 5, offset: -1));
+    }
+
+    // ── TTL / Expiration ────────────────────────────────────────────────────
+
+    [Fact]
+    public void TTL_ExpiredEntries_NotReturnedInSearch()
+    {
+        // TTL of 50ms — entries created with a timestamp 1 second ago are expired
+        var index = new VectorIndex(defaultTtl: TimeSpan.FromMilliseconds(50));
+
+        // Insert an entry with a timestamp in the past
+        var oldEntry = new VectorEntry("old", new float[] { 1f, 0f }, "expired",
+            createdAtUtc: DateTime.UtcNow.AddSeconds(-1));
+        var newEntry = new VectorEntry("new", new float[] { 0f, 1f }, "fresh");
+        index.BulkUpsert(new[] { oldEntry, newEntry });
+
+        var results = index.Search(new float[] { 1f, 0f }, k: 10, minScore: -1f);
+        // Only the fresh entry should appear
+        Assert.Single(results);
+        Assert.Equal("new", results[0].Entry.Id);
+    }
+
+    [Fact]
+    public void TTL_FreshEntries_ReturnedInSearch()
+    {
+        var index = new VectorIndex(defaultTtl: TimeSpan.FromHours(1));
+        index.Upsert(new VectorEntry("a", new float[] { 1f, 0f }));
+
+        var results = index.Search(new float[] { 1f, 0f }, k: 1);
+        Assert.Single(results);
+    }
+
+    [Fact]
+    public void TTL_EvictsOnMutation()
+    {
+        var index = new VectorIndex(defaultTtl: TimeSpan.FromMilliseconds(50));
+
+        // Insert entry with past timestamp
+        var oldEntry = new VectorEntry("old", new float[] { 1f, 0f },
+            createdAtUtc: DateTime.UtcNow.AddSeconds(-1));
+        index.Upsert(oldEntry);
+        Assert.Equal(1, index.Count);
+
+        // Next upsert should trigger eviction
+        index.Upsert(new VectorEntry("new", new float[] { 0f, 1f }));
+        Assert.Equal(1, index.Count); // old was evicted
+    }
+
+    [Fact]
+    public void TTL_NullDisablesExpiration()
+    {
+        var index = new VectorIndex(defaultTtl: null);
+        var oldEntry = new VectorEntry("old", new float[] { 1f, 0f },
+            createdAtUtc: DateTime.UtcNow.AddDays(-365));
+        index.Upsert(oldEntry);
+
+        var results = index.Search(new float[] { 1f, 0f }, k: 1);
+        Assert.Single(results);
+    }
+
+    [Fact]
+    public void TTL_ZeroOrNegative_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new VectorIndex(defaultTtl: TimeSpan.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new VectorIndex(defaultTtl: TimeSpan.FromSeconds(-1)));
+    }
+
+    [Fact]
+    public void TTL_PersistsTimestamp()
+    {
+        string tempPath = Path.Combine(Path.GetTempPath(), $"hnsw_test_{Guid.NewGuid()}.json");
+        try
+        {
+            var timestamp = new DateTime(2025, 6, 15, 12, 0, 0, DateTimeKind.Utc);
+            using (var index = new VectorIndex(dataPath: tempPath))
+            {
+                index.Upsert(new VectorEntry("a", new float[] { 1f, 0f },
+                    createdAtUtc: timestamp));
+            }
+
+            using var reloaded = new VectorIndex(dataPath: tempPath);
+            var results = reloaded.Search(new float[] { 1f, 0f }, k: 1);
+            Assert.Single(results);
+            Assert.Equal(timestamp, results[0].Entry.CreatedAtUtc);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
+
+    // ── VectorEntry.CreatedAtUtc ─────────────────────────────────────────────
+
+    [Fact]
+    public void VectorEntry_DefaultCreatedAtUtc_IsRecentUtcNow()
+    {
+        var before = DateTime.UtcNow;
+        var entry = new VectorEntry("a", new float[] { 1f });
+        var after = DateTime.UtcNow;
+
+        Assert.InRange(entry.CreatedAtUtc, before, after);
+    }
+
+    [Fact]
+    public void VectorEntry_ExplicitCreatedAtUtc_IsPreserved()
+    {
+        var ts = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var entry = new VectorEntry("a", new float[] { 1f }, createdAtUtc: ts);
+        Assert.Equal(ts, entry.CreatedAtUtc);
+    }
 }

@@ -20,7 +20,12 @@ public sealed class VectorEntry
     [JsonPropertyName("metadata")]
     public IReadOnlyDictionary<string, string> Metadata { get; }
 
-    public VectorEntry(string id, float[] vector, string? text = null, Dictionary<string, string>? metadata = null)
+    /// <summary>UTC timestamp when this entry was created (or last upserted).</summary>
+    [JsonIgnore]
+    public DateTime CreatedAtUtc { get; }
+
+    public VectorEntry(string id, float[] vector, string? text = null,
+        Dictionary<string, string>? metadata = null, DateTime? createdAtUtc = null)
     {
         if (string.IsNullOrWhiteSpace(id))
             throw new ArgumentException("Id must not be empty.", nameof(id));
@@ -36,5 +41,6 @@ public sealed class VectorEntry
         Text = text;
         Metadata = new ReadOnlyDictionary<string, string>(
             metadata is not null ? new Dictionary<string, string>(metadata) : new Dictionary<string, string>());
+        CreatedAtUtc = createdAtUtc ?? DateTime.UtcNow;
     }
 }

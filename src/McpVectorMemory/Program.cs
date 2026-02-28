@@ -22,9 +22,16 @@ else if (dataPath.Equals("none", StringComparison.OrdinalIgnoreCase) || dataPath
     dataPath = null;
 }
 
+// TTL: Set VECTOR_MEMORY_TTL_MINUTES to enable auto-expiration of old entries.
+TimeSpan? ttl = null;
+string? ttlEnv = Environment.GetEnvironmentVariable("VECTOR_MEMORY_TTL_MINUTES");
+if (ttlEnv is not null && double.TryParse(ttlEnv, out double ttlMinutes) && ttlMinutes > 0)
+    ttl = TimeSpan.FromMinutes(ttlMinutes);
+
 // Use a factory so the DI container owns the lifetime and calls Dispose on shutdown.
 string? capturedDataPath = dataPath;
-builder.Services.AddSingleton(_ => new VectorIndex(capturedDataPath));
+TimeSpan? capturedTtl = ttl;
+builder.Services.AddSingleton(_ => new VectorIndex(capturedDataPath, defaultTtl: capturedTtl));
 
 builder.Services
     .AddMcpServer()

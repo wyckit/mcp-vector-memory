@@ -28,7 +28,8 @@ internal static class IndexPersistence
             Text = e.Text,
             Metadata = e.Metadata.Count > 0
                 ? e.Metadata.ToDictionary(kv => kv.Key, kv => kv.Value)
-                : null
+                : null,
+            CreatedAtUtc = e.CreatedAtUtc
         }).ToArray();
 
         string? dir = Path.GetDirectoryName(path);
@@ -95,7 +96,8 @@ internal static class IndexPersistence
             if (string.IsNullOrWhiteSpace(dto.Id) || dto.Vector is null || dto.Vector.Length == 0)
                 continue; // skip corrupt entries
 
-            entries.Add(new VectorEntry(dto.Id, dto.Vector, dto.Text, dto.Metadata));
+            entries.Add(new VectorEntry(dto.Id, dto.Vector, dto.Text, dto.Metadata,
+                dto.CreatedAtUtc != default ? dto.CreatedAtUtc : null));
         }
         return entries;
     }
@@ -117,5 +119,8 @@ internal static class IndexPersistence
 
         [JsonPropertyName("metadata")]
         public Dictionary<string, string>? Metadata { get; set; }
+
+        [JsonPropertyName("createdAtUtc")]
+        public DateTime CreatedAtUtc { get; set; }
     }
 }
