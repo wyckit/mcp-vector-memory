@@ -13,6 +13,7 @@ public sealed class VectorMemoryTools
 
     public VectorMemoryTools(VectorIndex index)
     {
+        ArgumentNullException.ThrowIfNull(index);
         _index = index;
     }
 
@@ -45,12 +46,19 @@ public sealed class VectorMemoryTools
     /// </summary>
     [McpServerTool(Name = "search_memory")]
     [Description("Find the most similar stored memories for a query vector.")]
-    public IReadOnlyList<SearchResult> SearchMemory(
+    public object SearchMemory(
         [Description("The query vector embedding as an array of numbers.")] float[] vector,
         [Description("Maximum number of results to return (default: 5).")] int k = 5,
         [Description("Minimum cosine-similarity score threshold between -1 and 1 (default: 0).")] float minScore = 0f)
     {
-        return _index.Search(vector, k, minScore);
+        try
+        {
+            return _index.Search(vector, k, minScore);
+        }
+        catch (ArgumentException ex)
+        {
+            return $"Error: {ex.Message}";
+        }
     }
 
     /// <summary>

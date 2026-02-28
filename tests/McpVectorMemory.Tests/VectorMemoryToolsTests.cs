@@ -62,7 +62,8 @@ public class VectorMemoryToolsTests
         _tools.StoreMemory("a", new float[] { 1f, 0f }, "first");
         _tools.StoreMemory("b", new float[] { 0f, 1f }, "second");
 
-        var results = _tools.SearchMemory(new float[] { 1f, 0f }, k: 1);
+        var result = _tools.SearchMemory(new float[] { 1f, 0f }, k: 1);
+        var results = Assert.IsType<SearchResult[]>(result);
         Assert.Single(results);
         Assert.Equal("a", results[0].Entry.Id);
     }
@@ -70,8 +71,26 @@ public class VectorMemoryToolsTests
     [Fact]
     public void SearchMemory_EmptyIndex_ReturnsEmpty()
     {
-        var results = _tools.SearchMemory(new float[] { 1f, 0f });
+        var result = _tools.SearchMemory(new float[] { 1f, 0f });
+        var results = Assert.IsType<SearchResult[]>(result);
         Assert.Empty(results);
+    }
+
+    [Fact]
+    public void SearchMemory_ZeroMagnitudeVector_ReturnsError()
+    {
+        _tools.StoreMemory("a", new float[] { 1f, 0f });
+        var result = _tools.SearchMemory(new float[] { 0f, 0f });
+        Assert.IsType<string>(result);
+        Assert.StartsWith("Error:", (string)result);
+    }
+
+    [Fact]
+    public void SearchMemory_ZeroK_ReturnsError()
+    {
+        var result = _tools.SearchMemory(new float[] { 1f, 0f }, k: 0);
+        Assert.IsType<string>(result);
+        Assert.StartsWith("Error:", (string)result);
     }
 
     // ── DeleteMemory ─────────────────────────────────────────────────────────
@@ -90,5 +109,13 @@ public class VectorMemoryToolsTests
     {
         string result = _tools.DeleteMemory("missing");
         Assert.Contains("not found", result);
+    }
+
+    // ── Constructor ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Constructor_NullIndex_Throws()
+    {
+        Assert.Throws<ArgumentNullException>(() => new VectorMemoryTools(null!));
     }
 }

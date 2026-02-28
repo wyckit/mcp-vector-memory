@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text.Json.Serialization;
 
 namespace McpVectorMemory;
@@ -17,7 +18,7 @@ public sealed class VectorEntry
     public string? Text { get; }
 
     [JsonPropertyName("metadata")]
-    public Dictionary<string, string> Metadata { get; }
+    public IReadOnlyDictionary<string, string> Metadata { get; }
 
     public VectorEntry(string id, float[] vector, string? text = null, Dictionary<string, string>? metadata = null)
     {
@@ -29,6 +30,7 @@ public sealed class VectorEntry
         Id = id;
         Vector = (float[])vector.Clone();
         Text = text;
-        Metadata = metadata is not null ? new Dictionary<string, string>(metadata) : new Dictionary<string, string>();
+        Metadata = new ReadOnlyDictionary<string, string>(
+            metadata is not null ? new Dictionary<string, string>(metadata) : new Dictionary<string, string>());
     }
 }

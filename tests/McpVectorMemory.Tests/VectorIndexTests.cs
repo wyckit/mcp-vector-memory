@@ -246,4 +246,12 @@ public class VectorIndexTests
         metadata["key"] = "changed";
         Assert.Equal("value", entry.Metadata["key"]);
     }
+
+    [Fact]
+    public void VectorEntry_Metadata_IsReadOnly()
+    {
+        var entry = new VectorEntry("a", new float[] { 1f }, metadata: new Dictionary<string, string> { ["k"] = "v" });
+        Assert.IsAssignableFrom<IReadOnlyDictionary<string, string>>(entry.Metadata);
+        Assert.Throws<NotSupportedException>(() => ((IDictionary<string, string>)entry.Metadata)["k"] = "changed");
+    }
 }
