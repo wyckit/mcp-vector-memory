@@ -66,6 +66,10 @@ Activation energy formula: `(accessCount x reinforcementWeight) - (hoursSinceLas
 | `dismiss_collapse` | Dismiss a detected collapse and exclude its members from future scans. |
 | `trigger_accretion_scan` | Manually run a DBSCAN density scan on LTM entries in a namespace. |
 
+`collapse_cluster` reliability behavior:
+- If collapse steps complete successfully, the pending collapse is removed.
+- If summary storage or any member archival step fails, the tool returns an error and preserves the pending collapse so the same `collapseId` can be retried.
+
 ## Architecture
 
 ### Services

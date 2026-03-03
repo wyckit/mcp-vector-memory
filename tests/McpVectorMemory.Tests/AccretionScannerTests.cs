@@ -258,6 +258,62 @@ public class AccretionScannerTests : IDisposable
     }
 
     [Fact]
+    public void ExecuteCollapse_WhenArchiveStepFails_PreservesPendingCollapse()
+    {
+        _index.Upsert(new CognitiveEntry("a", new[] { 1f, 0f, 0f }, "test", lifecycleState: "ltm"));
+        _index.Upsert(new CognitiveEntry("b", new[] { 0.99f, 0.01f, 0f }, "test", lifecycleState: "ltm"));
+        _index.Upsert(new CognitiveEntry("c", new[] { 0.98f, 0.02f, 0f }, "test", lifecycleState: "ltm"));
+        _index.Upsert(new CognitiveEntry("d", new[] { 0.97f, 0.03f, 0f }, "test", lifecycleState: "ltm"));
+
+        var scanResult = _scanner.ScanNamespace("test");
+        var collapseId = scanResult.NewCollapses[0].CollapseId;
+
+        // Simulate partial failure: one member disappears before collapse execution.
+        _index.Delete("d");
+
+        var result = _scanner.ExecuteCollapse(
+            collapseId, "Summary of a, b, c, d", new[] { 0.99f, 0.01f, 0f },
+            _clusters, _lifecycle);
+
+        Assert.StartsWith("Error:", result);
+        Assert.Contains("partially failed during archive step", result);
+        Assert.Equal(1, _scanner.PendingCount);
+    }
+
+    [Fact]
+    public void ExecuteCollapse_AfterArchiveFailure_RetrySucceedsAndClearsPending()
+    {
+        _index.Upsert(new CognitiveEntry("a", new[] { 1f, 0f, 0f }, "test", lifecycleState: "ltm"));
+        _index.Upsert(new CognitiveEntry("b", new[] { 0.99f, 0.01f, 0f }, "test", lifecycleState: "ltm"));
+        _index.Upsert(new CognitiveEntry("c", new[] { 0.98f, 0.02f, 0f }, "test", lifecycleState: "ltm"));
+        _index.Upsert(new CognitiveEntry("d", new[] { 0.97f, 0.03f, 0f }, "test", lifecycleState: "ltm"));
+
+        var scanResult = _scanner.ScanNamespace("test");
+        var collapseId = scanResult.NewCollapses[0].CollapseId;
+
+        // First attempt fails because one member disappears.
+        _index.Delete("d");
+        var firstAttempt = _scanner.ExecuteCollapse(
+            collapseId, "Summary of a, b, c, d", new[] { 0.99f, 0.01f, 0f },
+            _clusters, _lifecycle);
+        Assert.StartsWith("Error:", firstAttempt);
+        Assert.Equal(1, _scanner.PendingCount);
+
+        // Restore missing member and retry the same pending collapse.
+        _index.Upsert(new CognitiveEntry("d", new[] { 0.97f, 0.03f, 0f }, "test", lifecycleState: "ltm"));
+        var secondAttempt = _scanner.ExecuteCollapse(
+            collapseId, "Summary of a, b, c, d", new[] { 0.99f, 0.01f, 0f },
+            _clusters, _lifecycle);
+
+        Assert.Contains("Collapsed 4 entries", secondAttempt);
+        Assert.Equal(0, _scanner.PendingCount);
+        Assert.Equal("archived", _index.Get("a")!.LifecycleState);
+        Assert.Equal("archived", _index.Get("b")!.LifecycleState);
+        Assert.Equal("archived", _index.Get("c")!.LifecycleState);
+        Assert.Equal("archived", _index.Get("d")!.LifecycleState);
+    }
+
+    [Fact]
     public void DismissCollapse_MarksEntriesAsExcluded()
     {
         _index.Upsert(new CognitiveEntry("a", new[] { 1f, 0f, 0f }, "test", lifecycleState: "ltm"));

@@ -327,7 +327,11 @@ public sealed class CognitiveIndex : IDisposable
         _lock.EnterUpgradeableReadLock();
         try
         {
-            LoadAllNamespaces();
+            if (ns is null || ns == "*")
+                LoadAllNamespaces();
+            else
+                EnsureNamespaceLoaded(ns);
+
             var entries = ns is null || ns == "*"
                 ? _namespaces.Values.SelectMany(n => n.Values.Select(t => t.Entry))
                 : _namespaces.TryGetValue(ns, out var nsEntries)

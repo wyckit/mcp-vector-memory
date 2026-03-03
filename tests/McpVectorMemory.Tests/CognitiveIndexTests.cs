@@ -289,6 +289,24 @@ public class CognitiveIndexTests : IDisposable
         Assert.Equal(1, archived);
     }
 
+    [Fact]
+    public void GetStateCounts_SpecificNamespace_WithSanitizedFileName_LoadsCorrectNamespace()
+    {
+        var ns = "team/alpha";
+        _persistence.SaveNamespaceSync(ns, new NamespaceData
+        {
+            Entries =
+            [
+                MakeEntry("persisted1", new[] { 1f, 0f }, ns: ns, lifecycleState: "ltm")
+            ]
+        });
+
+        var (stm, ltm, archived) = _index.GetStateCounts(ns);
+        Assert.Equal(0, stm);
+        Assert.Equal(1, ltm);
+        Assert.Equal(0, archived);
+    }
+
     // ── Concurrency ──
 
     [Fact]

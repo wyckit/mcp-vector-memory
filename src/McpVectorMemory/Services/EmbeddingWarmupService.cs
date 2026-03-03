@@ -17,8 +17,16 @@ public sealed class EmbeddingWarmupService : IHostedService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Warming up embedding model ({Dimensions}-dim)...", _embedding.Dimensions);
-        _embedding.Embed("warmup");
-        _logger.LogInformation("Embedding model ready.");
+        try
+        {
+            _embedding.Embed("warmup");
+            _logger.LogInformation("Embedding model ready.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Embedding warmup failed. Server will continue; embedding calls may fail until dependencies are available.");
+        }
+
         return Task.CompletedTask;
     }
 

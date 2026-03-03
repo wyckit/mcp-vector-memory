@@ -140,10 +140,22 @@ public sealed class AccretionScanner
 
         // Store summary
         var summaryId = clusters.StoreSummary(clusterId, summaryText, summaryVector);
+        if (summaryId.StartsWith("Error:"))
+            return summaryId;
 
         // Archive all original members
+        var archiveErrors = new List<string>();
         foreach (var memberId in collapse.MemberIds)
-            lifecycle.PromoteMemory(memberId, "archived");
+        {
+            var promoteResult = lifecycle.PromoteMemory(memberId, "archived");
+            if (promoteResult.StartsWith("Error:"))
+                archiveErrors.Add($"{memberId}: {promoteResult}");
+        }
+
+        if (archiveErrors.Count > 0)
+        {
+            return $"Error: Collapse '{collapseId}' partially failed during archive step. Pending collapse preserved for retry. Details: {string.Join(" | ", archiveErrors)}";
+        }
 
         // Only remove the pending collapse after all steps succeed
         _lock.EnterWriteLock();
@@ -291,16 +303,21 @@ public sealed class AccretionScanner
 
         var dim = entries[0].Vector.Length;
         var centroid = new float[dim];
+        int validCount = 0;
 
         foreach (var entry in entries)
         {
             if (entry.Vector.Length != dim) continue;
             for (int i = 0; i < dim; i++)
                 centroid[i] += entry.Vector[i];
+            validCount++;
         }
 
+        if (validCount == 0)
+            return Array.Empty<float>();
+
         for (int i = 0; i < dim; i++)
-            centroid[i] /= entries.Count;
+            centroid[i] /= validCount;
 
         return centroid;
     }
