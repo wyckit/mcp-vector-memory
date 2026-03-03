@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
     <PackageReference Include="ModelContextProtocol" Version="1.0.0" />
+    <PackageReference Include="SmartComponents.LocalEmbeddings" Version="0.1.0-preview10148" />
   </ItemGroup>
 
 </Project>
