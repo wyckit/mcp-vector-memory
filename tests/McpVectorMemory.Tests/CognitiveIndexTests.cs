@@ -1,5 +1,5 @@
-using McpVectorMemory.Models;
-using McpVectorMemory.Services;
+using McpVectorMemory.Core.Models;
+using McpVectorMemory.Core.Services;
 
 namespace McpVectorMemory.Tests;
 

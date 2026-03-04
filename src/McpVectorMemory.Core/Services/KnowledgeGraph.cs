@@ -1,6 +1,6 @@
-using McpVectorMemory.Models;
+using McpVectorMemory.Core.Models;
 
-namespace McpVectorMemory.Services;
+namespace McpVectorMemory.Core.Services;
 
 /// <summary>
 /// In-memory knowledge graph using adjacency lists for directed edges between cognitive entries.

@@ -1,6 +1,6 @@
-using McpVectorMemory.Models;
+using McpVectorMemory.Core.Models;
 
-namespace McpVectorMemory.Services;
+namespace McpVectorMemory.Core.Services;
 
 /// <summary>
 /// Manages semantic clusters: CRUD operations and centroid computation.
@@ -205,11 +205,9 @@ public sealed class ClusterManager
         }
 
         // Staleness: summary is stale if cluster membership changed since summary was stored.
-        // We use CreatedAt of the summary entry as the baseline.
         bool isStale = false;
         if (summaryEnt is not null)
         {
-            // Check if any current member was added (created) after the summary
             foreach (var memberId in memberIds)
             {
                 var member = _index.Get(memberId);

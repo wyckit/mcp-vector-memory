@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace McpVectorMemory.Models;
+namespace McpVectorMemory.Core.Models;
 
 /// <summary>
 /// A directed edge in the knowledge graph connecting two cognitive entries.

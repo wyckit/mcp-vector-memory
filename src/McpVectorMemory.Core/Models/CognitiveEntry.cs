@@ -1,10 +1,9 @@
 using System.Text.Json.Serialization;
 
-namespace McpVectorMemory.Models;
+namespace McpVectorMemory.Core.Models;
 
 /// <summary>
 /// A cognitive memory entry with namespace isolation, categorical metadata, and lifecycle tracking.
-/// Replaces VectorEntry as the primary storage unit.
 /// </summary>
 public sealed class CognitiveEntry
 {

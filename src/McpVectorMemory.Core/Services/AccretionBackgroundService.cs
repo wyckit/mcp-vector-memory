@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace McpVectorMemory.Services;
+namespace McpVectorMemory.Core.Services;
 
 /// <summary>
 /// Background service that periodically scans all namespaces for dense LTM clusters

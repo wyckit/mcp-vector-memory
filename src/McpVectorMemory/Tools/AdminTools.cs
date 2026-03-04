@@ -1,6 +1,6 @@
 using System.ComponentModel;
-using McpVectorMemory.Models;
-using McpVectorMemory.Services;
+using McpVectorMemory.Core.Models;
+using McpVectorMemory.Core.Services;
 using ModelContextProtocol.Server;
 
 namespace McpVectorMemory.Tools;

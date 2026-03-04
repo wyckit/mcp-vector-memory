@@ -1,4 +1,4 @@
-using McpVectorMemory.Services;
+using McpVectorMemory.Core.Services;
 using McpVectorMemory.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;

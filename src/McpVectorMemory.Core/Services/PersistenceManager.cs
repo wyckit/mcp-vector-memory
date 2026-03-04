@@ -1,8 +1,8 @@
 using System.Text.Json;
-using McpVectorMemory.Models;
+using McpVectorMemory.Core.Models;
 using Microsoft.Extensions.Logging;
 
-namespace McpVectorMemory.Services;
+namespace McpVectorMemory.Core.Services;
 
 /// <summary>
 /// JSON file-based persistence per namespace with debounced async writes.

@@ -1,4 +1,4 @@
-namespace McpVectorMemory.Models;
+namespace McpVectorMemory.Core.Models;
 
 /// <summary>
 /// Represents a dense cluster of entries detected by the accretion scanner,

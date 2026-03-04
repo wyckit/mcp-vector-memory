@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\McpVectorMemory\McpVectorMemory.csproj" />
+    <ProjectReference Include="..\..\src\McpVectorMemory.Core\McpVectorMemory.Core.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace McpVectorMemory.Models;
+namespace McpVectorMemory.Core.Models;
 
 /// <summary>
 /// Serialization container for all data within a single namespace.

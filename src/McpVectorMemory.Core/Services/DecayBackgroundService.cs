@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace McpVectorMemory.Services;
+namespace McpVectorMemory.Core.Services;
 
 /// <summary>
 /// Background service that runs decay cycles on all namespaces at a regular interval.
@@ -42,7 +42,7 @@ public sealed class DecayBackgroundService : BackgroundService
             {
                 var result = _lifecycle.RunDecayCycle("*");
                 _logger.LogInformation(
-                    "Decay cycle completed: {Processed} processed, {StmToLtm} STM→LTM, {LtmToArchived} LTM→Archived",
+                    "Decay cycle completed: {Processed} processed, {StmToLtm} STM->LTM, {LtmToArchived} LTM->Archived",
                     result.ProcessedCount, result.StmToLtm, result.LtmToArchived);
             }
             catch (Exception ex)

@@ -1,4 +1,4 @@
-using McpVectorMemory.Services;
+using McpVectorMemory.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace McpVectorMemory.Tests;

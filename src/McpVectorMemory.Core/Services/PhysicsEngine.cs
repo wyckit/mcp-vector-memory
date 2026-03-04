@@ -1,6 +1,6 @@
-using McpVectorMemory.Models;
+using McpVectorMemory.Core.Models;
 
-namespace McpVectorMemory.Services;
+namespace McpVectorMemory.Core.Services;
 
 /// <summary>
 /// Physics-based re-ranking engine that computes gravitational force for memory retrieval.
@@ -40,13 +40,6 @@ public sealed class PhysicsEngine
     /// <summary>
     /// Re-rank cosine search results using gravitational physics and produce a slingshot output.
     /// </summary>
-    /// <param name="cosineResults">Flat cosine-similarity results from CognitiveIndex.Search.</param>
-    /// <returns>
-    /// SlingshotResult with:
-    /// - Asteroid: highest cosine score (closest semantic neighbor)
-    /// - Sun: highest gravitational force (most massive/important memory)
-    /// - AllResults: all results sorted by descending gravity force
-    /// </returns>
     public SlingshotResult Slingshot(IReadOnlyList<CognitiveSearchResult> cosineResults)
     {
         if (cosineResults.Count == 0)

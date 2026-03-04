@@ -1,4 +1,4 @@
-namespace McpVectorMemory.Services;
+namespace McpVectorMemory.Core.Services;
 
 public interface IEmbeddingService
 {

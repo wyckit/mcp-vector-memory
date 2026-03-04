@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace McpVectorMemory.Models;
+namespace McpVectorMemory.Core.Models;
 
 /// <summary>
 /// Result of a cognitive memory search, enriched with lifecycle state and cluster context.

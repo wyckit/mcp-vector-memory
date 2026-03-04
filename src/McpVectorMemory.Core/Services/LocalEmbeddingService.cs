@@ -1,6 +1,6 @@
 using SmartComponents.LocalEmbeddings;
 
-namespace McpVectorMemory.Services;
+namespace McpVectorMemory.Core.Services;
 
 public sealed class LocalEmbeddingService : IEmbeddingService, IDisposable
 {

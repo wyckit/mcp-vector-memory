@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace McpVectorMemory.Models;
+namespace McpVectorMemory.Core.Models;
 
 /// <summary>
 /// A semantic cluster grouping related cognitive entries with a computed centroid.
