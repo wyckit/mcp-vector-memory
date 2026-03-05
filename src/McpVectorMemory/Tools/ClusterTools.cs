@@ -25,21 +25,31 @@ public sealed class ClusterTools
     public string CreateCluster(
         [Description("Cluster identifier.")] string clusterId,
         [Description("Namespace.")] string ns,
-        [Description("Initial member entry IDs.")] string[] memberIds,
+        [Description("Comma-separated initial member entry IDs.")] string memberIds,
         [Description("Human-readable cluster name.")] string? label = null)
     {
-        return _clusters.CreateCluster(clusterId, ns, memberIds, label);
+        try
+        {
+            var ids = memberIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            return _clusters.CreateCluster(clusterId, ns, ids, label);
+        }
+        catch (Exception ex)
+        {
+            return $"Error: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}";
+        }
     }
 
     [McpServerTool(Name = "update_cluster")]
     [Description("Add/remove members or update label. Centroid recomputed automatically.")]
     public string UpdateCluster(
         [Description("Cluster to modify.")] string clusterId,
-        [Description("Entry IDs to add.")] string[]? addMemberIds = null,
-        [Description("Entry IDs to remove.")] string[]? removeMemberIds = null,
+        [Description("Comma-separated entry IDs to add.")] string? addMemberIds = null,
+        [Description("Comma-separated entry IDs to remove.")] string? removeMemberIds = null,
         [Description("New label.")] string? label = null)
     {
-        return _clusters.UpdateCluster(clusterId, addMemberIds, removeMemberIds, label);
+        var addIds = addMemberIds?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        var removeIds = removeMemberIds?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        return _clusters.UpdateCluster(clusterId, addIds, removeIds, label);
     }
 
     [McpServerTool(Name = "store_cluster_summary")]
