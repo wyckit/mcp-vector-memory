@@ -16,10 +16,10 @@ public sealed class ClusterManager
     private readonly Dictionary<string, SemanticCluster> _clusters = new();
     private readonly ReaderWriterLockSlim _lock = new();
     private readonly CognitiveIndex _index;
-    private readonly PersistenceManager _persistence;
+    private readonly IStorageProvider _persistence;
     private bool _loaded;
 
-    public ClusterManager(CognitiveIndex index, PersistenceManager persistence)
+    public ClusterManager(CognitiveIndex index, IStorageProvider persistence)
     {
         _index = index;
         _persistence = persistence;

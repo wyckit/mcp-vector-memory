@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
 using ModelContextProtocol.Server;
@@ -14,12 +15,14 @@ public sealed class CoreMemoryTools
     private readonly CognitiveIndex _index;
     private readonly PhysicsEngine _physics;
     private readonly IEmbeddingService _embedding;
+    private readonly MetricsCollector _metrics;
 
-    public CoreMemoryTools(CognitiveIndex index, PhysicsEngine physics, IEmbeddingService embedding)
+    public CoreMemoryTools(CognitiveIndex index, PhysicsEngine physics, IEmbeddingService embedding, MetricsCollector metrics)
     {
         _index = index;
         _physics = physics;
         _embedding = embedding;
+        _metrics = metrics;
     }
 
     [McpServerTool(Name = "store_memory")]
@@ -35,10 +38,20 @@ public sealed class CoreMemoryTools
     {
         try
         {
+            using var _ = _metrics.StartTimer("store");
             var resolved = ResolveVector(vector, text);
             var entry = new CognitiveEntry(id, resolved, ns, text, category, metadata,
                 lifecycleState ?? "stm");
             _index.Upsert(entry);
+
+            // Check for near-duplicates against just this entry (O(N) instead of O(N²))
+            var duplicates = _index.FindDuplicatesForEntry(ns, id, threshold: 0.95f);
+            if (duplicates.Count > 0)
+            {
+                var dupIds = duplicates.Select(d => d.IdA == id ? d.IdB : d.IdA);
+                return $"Stored entry '{id}' ({resolved.Length}-dim vector) in namespace '{ns}'. WARNING: Near-duplicate(s) detected: [{string.Join(", ", dupIds)}]. Use detect_duplicates for details.";
+            }
+
             return $"Stored entry '{id}' ({resolved.Length}-dim vector) in namespace '{ns}'.";
         }
         catch (ArgumentException ex)
@@ -48,7 +61,7 @@ public sealed class CoreMemoryTools
     }
 
     [McpServerTool(Name = "search_memory")]
-    [Description("Namespace-scoped vector similarity search with lifecycle awareness, summary-first mode, and optional physics-based gravity re-ranking (slingshot output).")]
+    [Description("Namespace-scoped vector similarity search with lifecycle awareness, summary-first mode, and optional physics-based gravity re-ranking (slingshot output). Set explain=true for full retrieval diagnostics.")]
     public object SearchMemory(
         [Description("Namespace to search.")] string ns,
         [Description("The original text to search for.")] string? text = null,
@@ -58,12 +71,19 @@ public sealed class CoreMemoryTools
         [Description("Filter by category within namespace.")] string? category = null,
         [Description("Comma-separated lifecycle states to include (default: 'stm,ltm').")] string? includeStates = null,
         [Description("Prioritize cluster summaries in results (default: false).")] bool summaryFirst = false,
-        [Description("When true, return physics-based slingshot output (Asteroid + Sun) instead of flat list.")] bool usePhysics = false)
+        [Description("When true, return physics-based slingshot output (Asteroid + Sun) instead of flat list.")] bool usePhysics = false,
+        [Description("When true, return detailed retrieval explanation with each result (cosine, physics, lifecycle breakdown).")] bool explain = false)
     {
+        using var timer = _metrics.StartTimer("search");
+
         float[] resolved;
+        double embeddingMs;
         try
         {
+            var embedSw = Stopwatch.StartNew();
             resolved = ResolveVector(vector, text);
+            embedSw.Stop();
+            embeddingMs = embedSw.Elapsed.TotalMilliseconds;
         }
         catch (ArgumentException ex)
         {
@@ -74,16 +94,70 @@ public sealed class CoreMemoryTools
             ? new HashSet<string>(includeStates.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
             : new HashSet<string> { "stm", "ltm" };
 
+        var searchSw = Stopwatch.StartNew();
         var results = _index.Search(resolved, ns, k, minScore, category, states, summaryFirst);
+        searchSw.Stop();
 
-        // Side effect: record access for returned entries
+        // Side effect: record access for returned entries (namespace-scoped for efficiency)
         foreach (var result in results)
-            _index.RecordAccess(result.Id);
+            _index.RecordAccess(result.Id, ns);
 
+        // When usePhysics, apply gravity re-ranking before explain or return
+        IReadOnlyList<CognitiveSearchResult> orderedResults = results;
+        SlingshotResult? slingshot = null;
         if (usePhysics && results.Count > 0)
-            return _physics.Slingshot(results);
+        {
+            slingshot = _physics.Slingshot(results);
+            // Re-map to CognitiveSearchResult in gravity order for explain path
+            orderedResults = slingshot.AllResults.Select(r =>
+                new CognitiveSearchResult(r.Id, r.Text, r.CosineScore, r.LifecycleState,
+                    r.ActivationEnergy, r.Category, null, r.IsSummaryNode,
+                    r.SourceClusterId, r.AccessCount)).ToArray();
+        }
+
+        if (explain)
+            return BuildExplainedResponse(orderedResults, ns, searchSw.Elapsed.TotalMilliseconds,
+                embeddingMs, category, states, usePhysics, summaryFirst);
+
+        if (slingshot is not null)
+            return slingshot;
 
         return results;
+    }
+
+    private ExplainedSearchResponse BuildExplainedResponse(
+        IReadOnlyList<CognitiveSearchResult> results, string ns,
+        double searchMs, double embeddingMs, string? category,
+        HashSet<string> states, bool usePhysics, bool summaryFirst)
+    {
+        var explained = new List<ExplainedSearchResult>(results.Count);
+        for (int i = 0; i < results.Count; i++)
+        {
+            var r = results[i];
+            float mass = PhysicsEngine.ComputeMass(r.AccessCount, r.LifecycleState);
+            float gravity = PhysicsEngine.ComputeGravity(mass, r.Score);
+            float tierWeight = PhysicsEngine.GetTierWeight(r.LifecycleState);
+
+            var explanation = new RetrievalExplanation(
+                Rank: i + 1,
+                CosineScore: r.Score,
+                PhysicsMass: usePhysics ? mass : null,
+                GravityForce: usePhysics ? gravity : null,
+                LifecycleState: r.LifecycleState,
+                LifecycleTierWeight: tierWeight,
+                ActivationEnergy: r.ActivationEnergy,
+                AccessCount: r.AccessCount,
+                IsSummaryNode: r.IsSummaryNode,
+                SummaryBoosted: summaryFirst && r.IsSummaryNode);
+
+            explained.Add(new ExplainedSearchResult(r, explanation));
+        }
+
+        int totalInNamespace = _index.CountInNamespace(ns);
+
+        return new ExplainedSearchResponse(
+            explained, totalInNamespace, searchMs, embeddingMs,
+            category, states.ToList(), usePhysics, summaryFirst);
     }
 
     [McpServerTool(Name = "delete_memory")]

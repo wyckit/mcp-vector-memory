@@ -15,10 +15,10 @@ public sealed class CognitiveIndex : IDisposable
 {
     private readonly Dictionary<string, Dictionary<string, (CognitiveEntry Entry, float Norm)>> _namespaces = new();
     private readonly ReaderWriterLockSlim _lock = new();
-    private readonly PersistenceManager _persistence;
+    private readonly IStorageProvider _persistence;
     private readonly HashSet<string> _loadedNamespaces = new();
 
-    public CognitiveIndex(PersistenceManager persistence)
+    public CognitiveIndex(IStorageProvider persistence)
     {
         _persistence = persistence;
     }
@@ -212,6 +212,100 @@ public sealed class CognitiveIndex : IDisposable
                 e.IsSummaryNode, e.SourceClusterId, e.AccessCount);
         }
         return results;
+    }
+
+    /// <summary>
+    /// Find near-duplicates for a single entry within its namespace (O(N) scan).
+    /// Used by store_memory for on-ingest duplicate warning.
+    /// </summary>
+    public IReadOnlyList<(string IdA, string IdB, float Similarity)> FindDuplicatesForEntry(
+        string ns, string entryId, float threshold = 0.95f)
+    {
+        _lock.EnterUpgradeableReadLock();
+        try
+        {
+            EnsureNamespaceLoaded(ns);
+            if (!_namespaces.TryGetValue(ns, out var nsEntries))
+                return Array.Empty<(string, string, float)>();
+
+            if (!nsEntries.TryGetValue(entryId, out var target))
+                return Array.Empty<(string, string, float)>();
+
+            if (target.Norm == 0f)
+                return Array.Empty<(string, string, float)>();
+
+            var duplicates = new List<(string IdA, string IdB, float Similarity)>();
+            foreach (var (id, (entry, norm)) in nsEntries)
+            {
+                if (id == entryId || norm == 0f) continue;
+                if (entry.Vector.Length != target.Entry.Vector.Length) continue;
+
+                float dot = Dot(target.Entry.Vector, entry.Vector);
+                float sim = dot / (target.Norm * norm);
+                if (sim >= threshold)
+                    duplicates.Add((entryId, id, sim));
+            }
+
+            duplicates.Sort((a, b) => b.Similarity.CompareTo(a.Similarity));
+            return duplicates;
+        }
+        finally { _lock.ExitUpgradeableReadLock(); }
+    }
+
+    /// <summary>
+    /// Find near-duplicate entries within a namespace by pairwise cosine similarity.
+    /// Optimized: sorts candidates by norm for early-exit on impossible pairs,
+    /// and caps results to avoid unbounded output.
+    /// </summary>
+    public IReadOnlyList<(string IdA, string IdB, float Similarity)> FindDuplicates(
+        string ns, float threshold = 0.95f, string? category = null,
+        HashSet<string>? includeStates = null, int maxResults = 100)
+    {
+        if (threshold < 0f || threshold > 1f)
+            throw new ArgumentOutOfRangeException(nameof(threshold), "Threshold must be between 0 and 1.");
+
+        includeStates ??= new HashSet<string> { "stm", "ltm" };
+
+        List<(CognitiveEntry entry, float norm)> candidates;
+        _lock.EnterUpgradeableReadLock();
+        try
+        {
+            EnsureNamespaceLoaded(ns);
+            if (!_namespaces.TryGetValue(ns, out var nsEntries))
+                return Array.Empty<(string, string, float)>();
+
+            candidates = nsEntries.Values
+                .Where(t => includeStates.Contains(t.Entry.LifecycleState)
+                    && (category is null || t.Entry.Category == category)
+                    && t.Norm > 0f)
+                .ToList();
+        }
+        finally { _lock.ExitUpgradeableReadLock(); }
+
+        // Sort by norm ascending — allows early exit when norm ratio makes threshold impossible.
+        // For unit-norm vectors this has no effect, but for non-normalized vectors it skips pairs
+        // where the Cauchy-Schwarz upper bound (normA * normB) can't reach the threshold.
+        candidates.Sort((a, b) => a.norm.CompareTo(b.norm));
+
+        var duplicates = new List<(string IdA, string IdB, float Similarity)>();
+        for (int i = 0; i < candidates.Count && duplicates.Count < maxResults; i++)
+        {
+            for (int j = i + 1; j < candidates.Count && duplicates.Count < maxResults; j++)
+            {
+                var a = candidates[i];
+                var b = candidates[j];
+                if (a.entry.Vector.Length != b.entry.Vector.Length) continue;
+
+                float dot = Dot(a.entry.Vector, b.entry.Vector);
+                float sim = dot / (a.norm * b.norm);
+
+                if (sim >= threshold)
+                    duplicates.Add((a.entry.Id, b.entry.Id, sim));
+            }
+        }
+
+        duplicates.Sort((a, b) => b.Similarity.CompareTo(a.Similarity));
+        return duplicates;
     }
 
     /// <summary>

@@ -11,12 +11,15 @@ builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 // Services
 builder.Services.AddSingleton(sp => new PersistenceManager(
     logger: sp.GetService<ILogger<PersistenceManager>>()));
+builder.Services.AddSingleton<IStorageProvider>(sp => sp.GetRequiredService<PersistenceManager>());
 builder.Services.AddSingleton<CognitiveIndex>();
 builder.Services.AddSingleton<KnowledgeGraph>();
 builder.Services.AddSingleton<ClusterManager>();
 builder.Services.AddSingleton<LifecycleEngine>();
 builder.Services.AddSingleton<PhysicsEngine>();
 builder.Services.AddSingleton<AccretionScanner>();
+builder.Services.AddSingleton<MetricsCollector>();
+builder.Services.AddSingleton<BenchmarkRunner>();
 builder.Services.AddSingleton<LocalEmbeddingService>();
 builder.Services.AddSingleton<IEmbeddingService>(sp => sp.GetRequiredService<LocalEmbeddingService>());
 builder.Services.AddHostedService<EmbeddingWarmupService>();
@@ -32,6 +35,8 @@ builder.Services
     .WithTools<ClusterTools>()
     .WithTools<LifecycleTools>()
     .WithTools<AdminTools>()
-    .WithTools<AccretionTools>();
+    .WithTools<AccretionTools>()
+    .WithTools<BenchmarkTools>()
+    .WithTools<IntelligenceTools>();
 
 await builder.Build().RunAsync();

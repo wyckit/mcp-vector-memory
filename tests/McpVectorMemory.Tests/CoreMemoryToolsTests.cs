@@ -26,7 +26,7 @@ public class CoreMemoryToolsTests : IDisposable
         _index = new CognitiveIndex(_persistence);
         _graph = new KnowledgeGraph(_persistence, _index);
         _clusters = new ClusterManager(_index, _persistence);
-        _tools = new CoreMemoryTools(_index, new PhysicsEngine(), new StubEmbeddingService());
+        _tools = new CoreMemoryTools(_index, new PhysicsEngine(), new StubEmbeddingService(), new MetricsCollector());
     }
 
     public void Dispose()

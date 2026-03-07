@@ -1,0 +1,15 @@
+{
+  "datasetId": "paraphrase-v1",
+  "runAt": "2026-03-07T15:36:30Z",
+  "meanRecallAtK": 0.944,
+  "meanPrecisionAtK": 0.360,
+  "meanMrr": 1.000,
+  "meanNdcgAtK": 0.977,
+  "meanLatencyMs": 0.026,
+  "p95LatencyMs": 0.041,
+  "totalEntries": 25,
+  "totalQueries": 15,
+  "embeddingModel": "SmartComponents.LocalEmbeddings",
+  "embeddingDimensions": 384,
+  "notes": "Paraphrase robustness benchmark. Queries use heavy rephrasing of seed content to test semantic understanding."
+}

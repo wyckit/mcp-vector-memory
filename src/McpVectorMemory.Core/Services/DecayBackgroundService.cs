@@ -40,7 +40,7 @@ public sealed class DecayBackgroundService : BackgroundService
 
             try
             {
-                var result = _lifecycle.RunDecayCycle("*");
+                var result = _lifecycle.RunDecayCycle("*", useStoredConfig: true);
                 _logger.LogInformation(
                     "Decay cycle completed: {Processed} processed, {StmToLtm} STM->LTM, {LtmToArchived} LTM->Archived",
                     result.ProcessedCount, result.StmToLtm, result.LtmToArchived);

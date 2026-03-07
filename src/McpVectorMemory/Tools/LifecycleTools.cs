@@ -64,6 +64,22 @@ public sealed class LifecycleTools
         return _lifecycle.RunDecayCycle(ns, decayRate, reinforcementWeight, stmThreshold, archiveThreshold);
     }
 
+    [McpServerTool(Name = "configure_decay")]
+    [Description("Set per-namespace decay parameters. These are used by the background decay service and when decay_cycle is called with useStoredConfig=true.")]
+    public object ConfigureDecay(
+        [Description("Namespace to configure.")] string ns,
+        [Description("Decay per hour (default: 0.1).")] float? decayRate = null,
+        [Description("Weight per access (default: 1.0).")] float? reinforcementWeight = null,
+        [Description("Below this, STM demotes to LTM (default: 2.0).")] float? stmThreshold = null,
+        [Description("Below this, LTM archives (default: -5.0).")] float? archiveThreshold = null)
+    {
+        if (string.IsNullOrWhiteSpace(ns))
+            return "Error: Namespace must not be empty.";
+
+        var config = _lifecycle.SetDecayConfig(ns, decayRate, reinforcementWeight, stmThreshold, archiveThreshold);
+        return config;
+    }
+
     private float[] ResolveVector(float[]? vector, string? text)
     {
         if (vector is not null && vector.Length > 0)

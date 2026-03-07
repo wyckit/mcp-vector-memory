@@ -9,13 +9,17 @@ namespace McpVectorMemory.Core.Services;
 public sealed class AccretionScanner
 {
     private readonly CognitiveIndex _index;
+    private readonly IStorageProvider? _persistence;
     private readonly Dictionary<string, PendingCollapse> _pendingCollapses = new();
+    private readonly Dictionary<string, CollapseRecord> _collapseHistory = new();
     private readonly HashSet<string> _dismissedEntryIds = new();
     private readonly ReaderWriterLockSlim _lock = new();
+    private bool _historyLoaded;
 
-    public AccretionScanner(CognitiveIndex index)
+    public AccretionScanner(CognitiveIndex index, IStorageProvider? persistence = null)
     {
         _index = index;
+        _persistence = persistence;
     }
 
     /// <summary>
@@ -90,14 +94,14 @@ public sealed class AccretionScanner
         }
         finally { _lock.ExitReadLock(); }
 
-        // Resolve entries outside _lock (uses _index's own lock)
+        // Resolve entries outside _lock (uses _index's own lock, namespace-scoped to avoid loading all)
         var result = new List<PendingCollapseInfo>();
         foreach (var (collapseId, collapseNs, memberIds, memberCount, detectedAt) in snapshot)
         {
             var previews = new List<CognitiveEntryInfo>();
             foreach (var memberId in memberIds)
             {
-                var entry = _index.Get(memberId);
+                var entry = _index.Get(memberId, collapseNs);
                 if (entry is not null)
                     previews.Add(new CognitiveEntryInfo(entry.Id, entry.Text, entry.Ns, entry.Category, entry.LifecycleState));
             }
@@ -140,6 +144,15 @@ public sealed class AccretionScanner
         if (summaryId.StartsWith("Error:"))
             return summaryId;
 
+        // Capture previous lifecycle states before archiving (for reversible collapse)
+        var previousStates = new Dictionary<string, string>();
+        foreach (var memberId in collapse.MemberIds)
+        {
+            var entry = _index.Get(memberId, collapse.Ns);
+            if (entry is not null)
+                previousStates[memberId] = entry.LifecycleState;
+        }
+
         // Archive all original members
         var archiveErrors = new List<string>();
         foreach (var memberId in collapse.MemberIds)
@@ -154,11 +167,15 @@ public sealed class AccretionScanner
             return $"Error: Collapse '{collapseId}' partially failed during archive step. Pending collapse preserved for retry. Details: {string.Join(" | ", archiveErrors)}";
         }
 
-        // Only remove the pending collapse after all steps succeed
+        // Only remove the pending collapse after all steps succeed; record the collapse for reversal
         _lock.EnterWriteLock();
         try
         {
             _pendingCollapses.Remove(collapseId);
+            _collapseHistory[collapseId] = new CollapseRecord(
+                collapseId, clusterId, summaryId, collapse.Ns,
+                collapse.MemberIds.ToList(), previousStates);
+            ScheduleSaveHistory();
         }
         finally { _lock.ExitWriteLock(); }
 
@@ -184,6 +201,67 @@ public sealed class AccretionScanner
         finally { _lock.ExitWriteLock(); }
     }
 
+    /// <summary>
+    /// Reverse a previously executed collapse: restore members to pre-collapse state,
+    /// delete the summary entry, and remove the cluster.
+    /// </summary>
+    public string UndoCollapse(
+        string collapseId, LifecycleEngine lifecycle, ClusterManager clusters)
+    {
+        CollapseRecord record;
+        _lock.EnterUpgradeableReadLock();
+        try
+        {
+            EnsureHistoryLoaded();
+            if (!_collapseHistory.TryGetValue(collapseId, out record!))
+                return $"Error: No collapse record found for '{collapseId}'.";
+        }
+        finally { _lock.ExitUpgradeableReadLock(); }
+
+        // Restore each member to its pre-collapse lifecycle state
+        var restoreErrors = new List<string>();
+        foreach (var (memberId, previousState) in record.PreviousStates)
+        {
+            var result = lifecycle.PromoteMemory(memberId, previousState);
+            if (result.StartsWith("Error:"))
+                restoreErrors.Add($"{memberId}: {result}");
+        }
+
+        if (restoreErrors.Count > 0)
+            return $"Error: Uncollapse '{collapseId}' partially failed during restore. Details: {string.Join(" | ", restoreErrors)}";
+
+        // Delete the summary entry
+        _index.Delete(record.SummaryEntryId);
+
+        // Remove the cluster (by removing all members then the cluster itself is emptied)
+        clusters.UpdateCluster(record.ClusterId, removeIds: record.MemberIds);
+
+        // Remove the collapse record and persist
+        _lock.EnterWriteLock();
+        try
+        {
+            _collapseHistory.Remove(collapseId);
+            ScheduleSaveHistory();
+        }
+        finally { _lock.ExitWriteLock(); }
+
+        return $"Reversed collapse '{collapseId}': restored {record.MemberIds.Count} entries, removed summary '{record.SummaryEntryId}'.";
+    }
+
+    /// <summary>Get all recorded collapse records for a namespace.</summary>
+    public IReadOnlyList<CollapseRecord> GetCollapseHistory(string ns)
+    {
+        _lock.EnterUpgradeableReadLock();
+        try
+        {
+            EnsureHistoryLoaded();
+            return _collapseHistory.Values
+                .Where(r => r.Ns == ns)
+                .ToList();
+        }
+        finally { _lock.ExitUpgradeableReadLock(); }
+    }
+
     /// <summary>Number of pending (non-dismissed) collapses.</summary>
     public int PendingCount
     {
@@ -193,6 +271,33 @@ public sealed class AccretionScanner
             try { return _pendingCollapses.Count(kv => !kv.Value.Dismissed); }
             finally { _lock.ExitReadLock(); }
         }
+    }
+
+    // Called under upgradeable read lock or write lock.
+    // Upgrades to write lock if loading is needed.
+    private void EnsureHistoryLoaded()
+    {
+        if (_historyLoaded || _persistence is null) return;
+
+        _lock.EnterWriteLock();
+        try
+        {
+            // Double-check after acquiring write lock
+            if (_historyLoaded) return;
+            var records = _persistence.LoadCollapseHistory();
+            foreach (var r in records)
+                _collapseHistory[r.CollapseId] = r;
+            _historyLoaded = true;
+        }
+        finally { _lock.ExitWriteLock(); }
+    }
+
+    // Called under write lock.
+    private void ScheduleSaveHistory()
+    {
+        if (_persistence is null) return;
+        var snapshot = _collapseHistory.Values.ToList();
+        _persistence.ScheduleSaveCollapseHistory(() => snapshot);
     }
 
     // ── DBSCAN Implementation ──

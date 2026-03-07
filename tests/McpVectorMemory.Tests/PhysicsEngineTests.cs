@@ -207,7 +207,7 @@ public class PhysicsEngineTests
         var persistence = new PersistenceManager(testDataPath, debounceMs: 50);
         var index = new CognitiveIndex(persistence);
         var physics = new PhysicsEngine();
-        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService());
+        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService(), new MetricsCollector());
 
         try
         {
@@ -242,7 +242,7 @@ public class PhysicsEngineTests
         var persistence = new PersistenceManager(testDataPath, debounceMs: 50);
         var index = new CognitiveIndex(persistence);
         var physics = new PhysicsEngine();
-        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService());
+        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService(), new MetricsCollector());
 
         try
         {
@@ -266,7 +266,7 @@ public class PhysicsEngineTests
         var persistence = new PersistenceManager(testDataPath, debounceMs: 50);
         var index = new CognitiveIndex(persistence);
         var physics = new PhysicsEngine();
-        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService());
+        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService(), new MetricsCollector());
 
         try
         {

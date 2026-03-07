@@ -17,13 +17,17 @@ public sealed class PhysicsEngine
         ["archived"] = 0.5f
     };
 
+    /// <summary>Get the tier weight for a lifecycle state.</summary>
+    public static float GetTierWeight(string lifecycleState)
+        => TierWeights.GetValueOrDefault(lifecycleState, 1.0f);
+
     /// <summary>
     /// Compute dynamic mass for an entry.
     /// Formula: mass = log(1 + accessCount) * tierWeight
     /// </summary>
     public static float ComputeMass(int accessCount, string lifecycleState)
     {
-        float tierWeight = TierWeights.GetValueOrDefault(lifecycleState, 1.0f);
+        float tierWeight = GetTierWeight(lifecycleState);
         return MathF.Log(1 + accessCount) * tierWeight;
     }
 

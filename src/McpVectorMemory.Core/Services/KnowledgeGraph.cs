@@ -18,11 +18,11 @@ public sealed class KnowledgeGraph
     // incoming[targetId] = list of edges to targetId
     private readonly Dictionary<string, List<GraphEdge>> _incoming = new();
     private readonly ReaderWriterLockSlim _lock = new();
-    private readonly PersistenceManager _persistence;
+    private readonly IStorageProvider _persistence;
     private readonly CognitiveIndex _index;
     private bool _loaded;
 
-    public KnowledgeGraph(PersistenceManager persistence, CognitiveIndex index)
+    public KnowledgeGraph(IStorageProvider persistence, CognitiveIndex index)
     {
         _persistence = persistence;
         _index = index;
@@ -250,6 +250,37 @@ public sealed class KnowledgeGraph
             return edges;
         }
         finally { _lock.ExitUpgradeableReadLock(); }
+    }
+
+    /// <summary>Get all edges with a 'contradicts' relation for entries in a namespace.</summary>
+    public IReadOnlyList<(GraphEdge Edge, CognitiveEntry? Source, CognitiveEntry? Target)> GetContradictions(string ns)
+    {
+        List<GraphEdge> contradictEdges;
+
+        _lock.EnterUpgradeableReadLock();
+        try
+        {
+            EnsureLoaded();
+            contradictEdges = _outgoing.Values
+                .SelectMany(l => l)
+                .Where(e => e.Relation == "contradicts")
+                .ToList();
+        }
+        finally { _lock.ExitUpgradeableReadLock(); }
+
+        // Resolve entries outside graph lock, filter to namespace
+        var results = new List<(GraphEdge, CognitiveEntry?, CognitiveEntry?)>();
+        foreach (var edge in contradictEdges)
+        {
+            var source = _index.Get(edge.SourceId);
+            var target = _index.Get(edge.TargetId);
+
+            // Include if either entry is in the requested namespace
+            if ((source?.Ns == ns) || (target?.Ns == ns))
+                results.Add((edge, source, target));
+        }
+
+        return results;
     }
 
     /// <summary>Get all edges (for persistence).</summary>

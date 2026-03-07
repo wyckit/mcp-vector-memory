@@ -1,0 +1,15 @@
+{
+  "datasetId": "scale-v1",
+  "runAt": "2026-03-07T15:36:30Z",
+  "meanRecallAtK": 0.717,
+  "meanPrecisionAtK": 0.447,
+  "meanMrr": 1.000,
+  "meanNdcgAtK": 0.860,
+  "meanLatencyMs": 0.100,
+  "p95LatencyMs": 0.110,
+  "totalEntries": 80,
+  "totalQueries": 30,
+  "embeddingModel": "SmartComponents.LocalEmbeddings",
+  "embeddingDimensions": 384,
+  "notes": "Scale stress test. 80 entries across 8 categories (languages, data structures, ML, databases, networking, systems, security, devops). Tests metric degradation at 3.2x default corpus size."
+}

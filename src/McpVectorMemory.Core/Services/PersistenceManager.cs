@@ -7,7 +7,7 @@ namespace McpVectorMemory.Core.Services;
 /// <summary>
 /// JSON file-based persistence per namespace with debounced async writes.
 /// </summary>
-public sealed class PersistenceManager : IDisposable
+public sealed class PersistenceManager : IStorageProvider
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -31,6 +31,14 @@ public sealed class PersistenceManager : IDisposable
     // Pending cluster save
     private Timer? _pendingClusterTimer;
     private Func<List<SemanticCluster>>? _pendingClusterProvider;
+
+    // Pending collapse history save
+    private Timer? _pendingCollapseHistoryTimer;
+    private Func<List<CollapseRecord>>? _pendingCollapseHistoryProvider;
+
+    // Pending decay config save
+    private Timer? _pendingDecayConfigTimer;
+    private Func<Dictionary<string, DecayConfig>>? _pendingDecayConfigProvider;
 
     public PersistenceManager(string? basePath = null, int debounceMs = 500, ILogger<PersistenceManager>? logger = null)
     {
@@ -99,6 +107,49 @@ public sealed class PersistenceManager : IDisposable
         catch (JsonException ex)
         {
             _logger?.LogWarning(ex, "Corrupted JSON in clusters file, returning empty data");
+            return new();
+        }
+    }
+
+    /// <summary>
+    /// Load collapse history from disk.
+    /// </summary>
+    public List<CollapseRecord> LoadCollapseHistory()
+    {
+        var path = Path.Combine(_basePath, "_collapse_history.json");
+        if (!File.Exists(path))
+            return new();
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            return JsonSerializer.Deserialize<List<CollapseRecord>>(json, JsonOptions) ?? new();
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogWarning(ex, "Corrupted JSON in collapse history file, returning empty data");
+            return new();
+        }
+    }
+
+    /// <summary>
+    /// Load per-namespace decay configs from disk.
+    /// </summary>
+    public Dictionary<string, DecayConfig> LoadDecayConfigs()
+    {
+        var path = Path.Combine(_basePath, "_decay_configs.json");
+        if (!File.Exists(path))
+            return new();
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            var list = JsonSerializer.Deserialize<List<DecayConfig>>(json, JsonOptions) ?? new();
+            return list.ToDictionary(c => c.Ns);
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogWarning(ex, "Corrupted JSON in decay configs file, returning empty data");
             return new();
         }
     }
@@ -194,6 +245,62 @@ public sealed class PersistenceManager : IDisposable
     }
 
     /// <summary>
+    /// Schedule a debounced save of collapse history.
+    /// </summary>
+    public void ScheduleSaveCollapseHistory(Func<List<CollapseRecord>> dataProvider)
+    {
+        lock (_timerLock)
+        {
+            if (_disposed) return;
+
+            _pendingCollapseHistoryTimer?.Dispose();
+            _pendingCollapseHistoryProvider = dataProvider;
+
+            _pendingCollapseHistoryTimer = new Timer(_ =>
+            {
+                Func<List<CollapseRecord>>? provider;
+                lock (_timerLock)
+                {
+                    provider = _pendingCollapseHistoryProvider;
+                    _pendingCollapseHistoryProvider = null;
+                    _pendingCollapseHistoryTimer?.Dispose();
+                    _pendingCollapseHistoryTimer = null;
+                }
+                if (provider is not null)
+                    WriteCollapseHistory(provider);
+            }, null, _debounceDelay, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>
+    /// Schedule a debounced save of decay configs.
+    /// </summary>
+    public void ScheduleSaveDecayConfigs(Func<Dictionary<string, DecayConfig>> dataProvider)
+    {
+        lock (_timerLock)
+        {
+            if (_disposed) return;
+
+            _pendingDecayConfigTimer?.Dispose();
+            _pendingDecayConfigProvider = dataProvider;
+
+            _pendingDecayConfigTimer = new Timer(_ =>
+            {
+                Func<Dictionary<string, DecayConfig>>? provider;
+                lock (_timerLock)
+                {
+                    provider = _pendingDecayConfigProvider;
+                    _pendingDecayConfigProvider = null;
+                    _pendingDecayConfigTimer?.Dispose();
+                    _pendingDecayConfigTimer = null;
+                }
+                if (provider is not null)
+                    WriteDecayConfigs(provider);
+            }, null, _debounceDelay, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>
     /// Synchronously save namespace data.
     /// </summary>
     public void SaveNamespaceSync(string ns, NamespaceData data)
@@ -213,7 +320,7 @@ public sealed class PersistenceManager : IDisposable
 
         return Directory.GetFiles(_basePath, "*.json")
             .Select(Path.GetFileNameWithoutExtension)
-            .Where(n => n != null && n != "_edges" && n != "_clusters")
+            .Where(n => n != null && !n.StartsWith("_") && !n.StartsWith("__"))
             .Select(n => n!)
             .ToList();
     }
@@ -226,6 +333,8 @@ public sealed class PersistenceManager : IDisposable
         List<(string Ns, Func<NamespaceData> Provider)> pendingNs;
         Func<List<GraphEdge>>? edgeProvider;
         Func<List<SemanticCluster>>? clusterProvider;
+        Func<List<CollapseRecord>>? collapseHistoryProvider;
+        Func<Dictionary<string, DecayConfig>>? decayConfigProvider;
 
         lock (_timerLock)
         {
@@ -245,6 +354,16 @@ public sealed class PersistenceManager : IDisposable
             _pendingClusterProvider = null;
             _pendingClusterTimer?.Dispose();
             _pendingClusterTimer = null;
+
+            collapseHistoryProvider = _pendingCollapseHistoryProvider;
+            _pendingCollapseHistoryProvider = null;
+            _pendingCollapseHistoryTimer?.Dispose();
+            _pendingCollapseHistoryTimer = null;
+
+            decayConfigProvider = _pendingDecayConfigProvider;
+            _pendingDecayConfigProvider = null;
+            _pendingDecayConfigTimer?.Dispose();
+            _pendingDecayConfigTimer = null;
         }
 
         foreach (var (ns, provider) in pendingNs)
@@ -255,6 +374,12 @@ public sealed class PersistenceManager : IDisposable
 
         if (clusterProvider is not null)
             WriteClusters(clusterProvider);
+
+        if (collapseHistoryProvider is not null)
+            WriteCollapseHistory(collapseHistoryProvider);
+
+        if (decayConfigProvider is not null)
+            WriteDecayConfigs(decayConfigProvider);
     }
 
     public void Dispose()
@@ -321,6 +446,37 @@ public sealed class PersistenceManager : IDisposable
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Failed to save clusters");
+        }
+    }
+
+    private void WriteCollapseHistory(Func<List<CollapseRecord>> provider)
+    {
+        try
+        {
+            var records = provider();
+            var json = JsonSerializer.Serialize(records, JsonOptions);
+            var path = Path.Combine(_basePath, "_collapse_history.json");
+            AtomicWriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to save collapse history");
+        }
+    }
+
+    private void WriteDecayConfigs(Func<Dictionary<string, DecayConfig>> provider)
+    {
+        try
+        {
+            var configs = provider();
+            var list = configs.Values.ToList();
+            var json = JsonSerializer.Serialize(list, JsonOptions);
+            var path = Path.Combine(_basePath, "_decay_configs.json");
+            AtomicWriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to save decay configs");
         }
     }
 

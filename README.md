@@ -17,6 +17,8 @@ src/
   McpVectorMemory.Core/      # Core library (Models + Services)
 tests/
   McpVectorMemory.Tests/     # xUnit tests
+benchmarks/
+  baseline-v1.json           # IR quality baseline (MRR 1.0, nDCG@5 0.938, Recall@5 0.867)
 ```
 
 ## NuGet Package
@@ -53,14 +55,14 @@ var results = cognitiveIndex.Search("default", "French capital", topK: 5);
 - Microsoft.Extensions.Hosting 8.0.1
 - xUnit (tests)
 
-## MCP Tools (21 total)
+## MCP Tools (29 total)
 
 ### Core Memory (3 tools)
 
 | Tool | Description |
 |------|-------------|
-| `store_memory` | Store a vector embedding with text, category, and optional metadata. Defaults to STM lifecycle state. |
-| `search_memory` | k-NN search within a namespace with optional lifecycle/category filtering, summary-first mode, and physics-based re-ranking. |
+| `store_memory` | Store a vector embedding with text, category, and optional metadata. Defaults to STM lifecycle state. Warns if near-duplicates are detected. |
+| `search_memory` | k-NN search within a namespace with optional lifecycle/category filtering, summary-first mode, physics-based re-ranking, and `explain` mode for full retrieval diagnostics. |
 | `delete_memory` | Remove a memory entry by ID. Cascades to remove associated graph edges and cluster memberships. |
 
 ### Knowledge Graph (4 tools)
@@ -84,13 +86,14 @@ Supported relation types: `parent_child`, `cross_reference`, `similar_to`, `cont
 | `get_cluster` | Retrieve full cluster details including members and summary info. |
 | `list_clusters` | List all clusters in a namespace with summary status. |
 
-### Lifecycle Management (3 tools)
+### Lifecycle Management (4 tools)
 
 | Tool | Description |
 |------|-------------|
 | `promote_memory` | Manually transition a memory between lifecycle states (`stm`, `ltm`, `archived`). |
 | `deep_recall` | Search across ALL lifecycle states. Auto-resurrects high-scoring archived entries above the resurrection threshold. |
 | `decay_cycle` | Trigger activation energy recomputation and state transitions for a namespace. |
+| `configure_decay` | Set per-namespace decay parameters (decayRate, reinforcementWeight, stmThreshold, archiveThreshold). Used by background service and `decay_cycle` with `useStoredConfig=true`. |
 
 Activation energy formula: `(accessCount x reinforcementWeight) - (hoursSinceLastAccess x decayRate)`
 
@@ -111,8 +114,28 @@ Activation energy formula: `(accessCount x reinforcementWeight) - (hoursSinceLas
 | `trigger_accretion_scan` | Manually run a DBSCAN density scan on LTM entries in a namespace. |
 
 `collapse_cluster` reliability behavior:
-- If collapse steps complete successfully, the pending collapse is removed.
+- If collapse steps complete successfully, the pending collapse is removed and a reversal record is persisted to disk.
 - If summary storage or any member archival step fails, the tool returns an error and preserves the pending collapse so the same `collapseId` can be retried.
+- Collapse records survive server restarts and can be reversed with `uncollapse_cluster`.
+
+### Intelligence & Safety (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `detect_duplicates` | Find near-duplicate entries in a namespace by pairwise cosine similarity above a configurable threshold. |
+| `find_contradictions` | Surface contradictions: entries linked with `contradicts` graph edges, plus high-similarity topic-relevant pairs for review. |
+| `uncollapse_cluster` | Reverse a previously executed accretion collapse: restore archived members to pre-collapse state, delete summary, clean up cluster. |
+| `list_collapse_history` | List all reversible collapse records for a namespace. |
+
+### Benchmarking & Observability (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `run_benchmark` | Run the built-in IR quality benchmark: ingest 25 seed entries, execute 20 queries, compute Recall@K, Precision@K, MRR, nDCG@K, and latency percentiles. Uses an isolated namespace that is cleaned up after. |
+| `get_metrics` | Get operational metrics: latency percentiles (P50/P95/P99), throughput, and counts for search, store, and other operations. |
+| `reset_metrics` | Reset collected operational metrics. Optionally filter by operation type. |
+
+Benchmark dataset covers programming languages, data structures, ML, databases, networking, and systems topics. Relevance grades use a 0–3 scale (3 = highly relevant).
 
 ## Architecture
 
@@ -120,21 +143,25 @@ Activation energy formula: `(accessCount x reinforcementWeight) - (hoursSinceLas
 
 | Service | Description |
 |---------|-------------|
-| `CognitiveIndex` | Thread-safe namespace-partitioned vector index with k-NN search, lifecycle filtering, and access tracking |
-| `KnowledgeGraph` | In-memory directed graph with adjacency lists and bidirectional edge support |
+| `CognitiveIndex` | Thread-safe namespace-partitioned vector index with k-NN search, lifecycle filtering, duplicate detection, and access tracking |
+| `KnowledgeGraph` | In-memory directed graph with adjacency lists, bidirectional edge support, and contradiction surfacing |
 | `ClusterManager` | Semantic cluster CRUD with automatic centroid computation |
-| `LifecycleEngine` | Activation energy computation, decay cycles, and state transitions (STM/LTM/archived) |
+| `LifecycleEngine` | Activation energy computation, per-namespace decay configs, decay cycles, and state transitions (STM/LTM/archived) |
 | `PhysicsEngine` | Gravitational force re-ranking with "Asteroid" (semantic) + "Sun" (importance) output |
-| `AccretionScanner` | DBSCAN-based density scanning of LTM entries for cluster detection |
-| `PersistenceManager` | JSON file-based persistence with debounced async writes (default 500ms) |
+| `AccretionScanner` | DBSCAN-based density scanning with reversible collapse history (persisted to disk) |
+| `BenchmarkRunner` | IR quality benchmark execution with Recall@K, Precision@K, MRR, nDCG@K scoring |
+| `MetricsCollector` | Thread-safe operational metrics with P50/P95/P99 latency percentiles |
+| `IStorageProvider` | Storage abstraction interface for persistence backends |
+| `PersistenceManager` | JSON file-based `IStorageProvider` implementation with debounced async writes (default 500ms) |
 | `LocalEmbeddingService` | 384-dimensional vector embeddings via SmartComponents.LocalEmbeddings |
+| `HashEmbeddingService` | Deterministic hash-based embeddings for testing/CI (no model dependency) |
 
 ### Background Services
 
 | Service | Interval | Description |
 |---------|----------|-------------|
 | `EmbeddingWarmupService` | Startup | Warms up the embedding model on server start so first queries are fast |
-| `DecayBackgroundService` | 15 minutes | Runs activation energy decay on all namespaces |
+| `DecayBackgroundService` | 15 minutes | Runs activation energy decay on all namespaces using stored per-namespace configs |
 | `AccretionBackgroundService` | 30 minutes | Scans all namespaces for dense LTM clusters needing summarization |
 
 ### Persistence
@@ -143,6 +170,8 @@ Data is stored as JSON files in a `data/` directory:
 - `{namespace}.json` — entries (per namespace)
 - `_edges.json` — graph edges (global)
 - `_clusters.json` — semantic clusters (global)
+- `_collapse_history.json` — reversible collapse records (global)
+- `_decay_configs.json` — per-namespace decay configurations (global)
 
 Writes are debounced (500ms default) to avoid excessive disk I/O.
 
@@ -173,11 +202,13 @@ dotnet test
 
 ### Tests
 
-13 test files with 170 test cases covering:
+16 test files with 235 test cases covering:
 
 | Test File | Tests | Focus |
 |-----------|-------|-------|
 | `CognitiveIndexTests.cs` | 39 | Vector search, lifecycle filtering, persistence |
+| `IntelligenceTests.cs` | 37 | Duplicate detection, contradictions, reversible collapse, decay tuning, hash embeddings, persistence |
+| `BenchmarkRunnerTests.cs` | 20 | IR metrics (Recall@K, Precision@K, MRR, nDCG@K), dataset validation |
 | `CoreMemoryToolsTests.cs` | 20 | Store, search, delete memory tool endpoints |
 | `PhysicsEngineTests.cs` | 19 | Mass computation, gravitational force, slingshot |
 | `AccretionScannerTests.cs` | 18 | DBSCAN clustering, pending collapses |
@@ -186,6 +217,7 @@ dotnet test
 | `LifecycleEngineTests.cs` | 12 | State transitions, deep recall, decay cycles |
 | `PersistenceManagerTests.cs` | 9 | JSON serialization, debounced saves |
 | `RegressionTests.cs` | 9 | Integration and edge-case scenarios |
+| `MetricsCollectorTests.cs` | 8 | Latency recording, percentile computation, timer pattern |
 | `AccretionToolsTests.cs` | 7 | Accretion tool functionality |
 | `DecayBackgroundServiceTests.cs` | 2 | Background service decay cycles |
 | `AccretionBackgroundServiceTests.cs` | 2 | Background service lifecycle |

@@ -129,7 +129,7 @@ public class RegressionTests : IDisposable
         _index.Upsert(new CognitiveEntry("b", new[] { 0f, 1f }, "test"));
         _clusters.CreateCluster("c1", "test", new[] { "a", "b" });
 
-        var tools = new CoreMemoryTools(_index, new PhysicsEngine(), new StubEmbeddingService());
+        var tools = new CoreMemoryTools(_index, new PhysicsEngine(), new StubEmbeddingService(), new MetricsCollector());
 
         // Run StoreSummary and DeleteMemory concurrently — should not deadlock
         var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));

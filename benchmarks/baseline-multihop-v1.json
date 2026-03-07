@@ -1,0 +1,15 @@
+{
+  "datasetId": "multihop-v1",
+  "runAt": "2026-03-07T15:36:30Z",
+  "meanRecallAtK": 0.939,
+  "meanPrecisionAtK": 0.587,
+  "meanMrr": 1.000,
+  "meanNdcgAtK": 0.929,
+  "meanLatencyMs": 0.043,
+  "p95LatencyMs": 0.053,
+  "totalEntries": 25,
+  "totalQueries": 15,
+  "embeddingModel": "SmartComponents.LocalEmbeddings",
+  "embeddingDimensions": 384,
+  "notes": "Multi-hop reasoning benchmark. Queries span two or more topics requiring multiple relevant seeds to surface."
+}
