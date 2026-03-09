@@ -68,6 +68,32 @@ public sealed class KnowledgeGraph
         finally { _lock.ExitWriteLock(); }
     }
 
+    /// <summary>Create multiple edges in a single write lock acquisition.</summary>
+    public int AddEdges(IEnumerable<GraphEdge> edges)
+    {
+        _lock.EnterWriteLock();
+        try
+        {
+            EnsureLoadedUnderWrite();
+            int count = 0;
+            foreach (var edge in edges)
+            {
+                AddEdgeInternal(edge);
+                if (edge.Relation == "cross_reference")
+                {
+                    var reverse = new GraphEdge(edge.TargetId, edge.SourceId, "cross_reference",
+                        edge.Weight, edge.Metadata.Count > 0 ? new Dictionary<string, string>(edge.Metadata) : null);
+                    AddEdgeInternal(reverse);
+                }
+                count++;
+            }
+            if (count > 0)
+                ScheduleSaveEdges();
+            return count;
+        }
+        finally { _lock.ExitWriteLock(); }
+    }
+
     /// <summary>Remove edges between two entries, optionally filtered by relation.</summary>
     public string RemoveEdges(string sourceId, string targetId, string? relation = null)
     {

@@ -283,4 +283,54 @@ public class BenchmarkRunnerTests
 
         index.Dispose();
     }
+
+    [Theory]
+    [InlineData("default-v1", "vector")]
+    [InlineData("default-v1", "hybrid")]
+    [InlineData("default-v1", "vector_rerank")]
+    [InlineData("default-v1", "hybrid_rerank")]
+    [InlineData("paraphrase-v1", "vector")]
+    [InlineData("multihop-v1", "vector")]
+    [InlineData("scale-v1", "vector")]
+    public void RunOnnxBenchmark(string datasetId, string mode)
+    {
+        var dataPath = Path.Combine(Path.GetTempPath(), $"onnx_bench_{Guid.NewGuid():N}");
+        var persistence = new PersistenceManager(dataPath);
+        using var embedding = new OnnxEmbeddingService();
+        var index = new CognitiveIndex(persistence);
+        var runner = new BenchmarkRunner(index, embedding);
+
+        var searchMode = mode switch
+        {
+            "hybrid" => BenchmarkRunner.SearchMode.Hybrid,
+            "vector_rerank" => BenchmarkRunner.SearchMode.VectorRerank,
+            "hybrid_rerank" => BenchmarkRunner.SearchMode.HybridRerank,
+            _ => BenchmarkRunner.SearchMode.Vector
+        };
+
+        var dataset = BenchmarkRunner.CreateDataset(datasetId)!;
+        var result = runner.Run(dataset, searchMode);
+
+        _output.WriteLine($"=== {datasetId} [{mode}] (ONNX bge-micro-v2) ===");
+        _output.WriteLine($"  Seeds: {result.TotalEntries}, Queries: {result.TotalQueries}");
+        _output.WriteLine($"  Recall@K:    {result.MeanRecallAtK:F3}");
+        _output.WriteLine($"  Precision@K: {result.MeanPrecisionAtK:F3}");
+        _output.WriteLine($"  MRR:         {result.MeanMRR:F3}");
+        _output.WriteLine($"  nDCG@K:      {result.MeanNdcgAtK:F3}");
+        _output.WriteLine($"  Latency:     {result.MeanLatencyMs:F3}ms (P95: {result.P95LatencyMs:F3}ms)");
+
+        // Per-query breakdown for diagnostics
+        foreach (var q in result.QueryScores)
+        {
+            _output.WriteLine($"    {q.QueryId}: R={q.RecallAtK:F2} P={q.PrecisionAtK:F2} MRR={q.MRR:F2} nDCG={q.NdcgAtK:F2} [{q.LatencyMs:F1}ms]");
+        }
+
+        Assert.True(result.MeanRecallAtK >= 0f);
+        Assert.True(result.MeanMRR >= 0f);
+
+        index.Dispose();
+        persistence.Dispose();
+        if (Directory.Exists(dataPath))
+            Directory.Delete(dataPath, true);
+    }
 }

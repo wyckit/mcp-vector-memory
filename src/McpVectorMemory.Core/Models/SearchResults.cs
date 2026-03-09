@@ -108,6 +108,24 @@ public sealed record LifecycleStats(
     [property: JsonPropertyName("namespaces")] IReadOnlyList<string> Namespaces);
 
 /// <summary>
+/// Result of a rebuild_embeddings operation for a single namespace.
+/// </summary>
+public sealed record RebuildNamespaceResult(
+    [property: JsonPropertyName("namespace")] string Namespace,
+    [property: JsonPropertyName("updated")] int Updated,
+    [property: JsonPropertyName("skipped")] int Skipped);
+
+/// <summary>
+/// Aggregate result of a rebuild_embeddings operation.
+/// </summary>
+public sealed record RebuildEmbeddingsResult(
+    [property: JsonPropertyName("totalUpdated")] int TotalUpdated,
+    [property: JsonPropertyName("totalSkipped")] int TotalSkipped,
+    [property: JsonPropertyName("namespacesProcessed")] int NamespacesProcessed,
+    [property: JsonPropertyName("results")] IReadOnlyList<RebuildNamespaceResult> Results,
+    [property: JsonPropertyName("embeddingDimensions")] int EmbeddingDimensions);
+
+/// <summary>
 /// A search result enriched with physics-based mass and gravitational force.
 /// </summary>
 public sealed record PhysicsRankedResult(

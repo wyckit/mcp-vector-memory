@@ -67,7 +67,7 @@ var results = index.Search(queryVector, "default", k: 5);
 - Microsoft.Extensions.Hosting 8.0.1
 - xUnit (tests)
 
-## MCP Tools (29 total)
+## MCP Tools (33 total)
 
 ### Core Memory (3 tools)
 
@@ -139,6 +139,16 @@ Activation energy formula: `(accessCount x reinforcementWeight) - (hoursSinceLas
 | `uncollapse_cluster` | Reverse a previously executed accretion collapse: restore archived members to pre-collapse state, delete summary, clean up cluster. |
 | `list_collapse_history` | List all reversible collapse records for a namespace. |
 
+### Panel of Experts / Debate (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `consult_expert_panel` | Consult a panel of experts by running parallel searches across multiple expert namespaces. Stores each perspective in an active-debate namespace and returns integer-aliased results so the LLM can reference nodes without managing UUIDs. Replaces multiple `search_memory` + `store_memory` calls with a single macro-command. |
+| `map_debate_graph` | Map logical relationships between debate nodes using integer aliases from `consult_expert_panel`. Translates aliases to UUIDs internally and batch-creates knowledge graph edges. Replaces multiple `link_memories` calls with a single macro-command. |
+| `resolve_debate` | Resolve a debate by storing a consensus summary as LTM, linking it to the winning perspective, and batch-archiving all raw debate nodes. Cleans up session state. Replaces manual `store_memory` + `link_memories` + `promote_memory` calls with a single macro-command. |
+
+Debate workflow: `consult_expert_panel` (gather perspectives) → `map_debate_graph` (define relationships) → `resolve_debate` (store consensus). Sessions use integer aliases (1, 2, 3...) so the LLM never handles UUIDs. Sessions auto-expire after 1 hour.
+
 ### Benchmarking & Observability (3 tools)
 
 | Tool | Description |
@@ -148,6 +158,12 @@ Activation energy formula: `(accessCount x reinforcementWeight) - (hoursSinceLas
 | `reset_metrics` | Reset collected operational metrics. Optionally filter by operation type. |
 
 Four benchmark datasets covering programming languages, data structures, ML, databases, networking, systems, security, and DevOps topics. Relevance grades use a 0–3 scale (3 = highly relevant).
+
+### Maintenance (1 tool)
+
+| Tool | Description |
+|------|-------------|
+| `rebuild_embeddings` | Re-embed all entries in one or all namespaces using the current embedding model. Use after upgrading the embedding model to regenerate vectors from stored text. Entries without text are skipped. Preserves all metadata, lifecycle state, and timestamps. |
 
 ## Architecture
 
@@ -163,6 +179,7 @@ Four benchmark datasets covering programming languages, data structures, ML, dat
 | `AccretionScanner` | DBSCAN-based density scanning with reversible collapse history (persisted to disk) |
 | `BenchmarkRunner` | IR quality benchmark execution with Recall@K, Precision@K, MRR, nDCG@K scoring |
 | `MetricsCollector` | Thread-safe operational metrics with P50/P95/P99 latency percentiles |
+| `DebateSessionManager` | Volatile in-memory session state for debate workflows with integer alias mapping and 1-hour TTL auto-purge |
 | `IStorageProvider` | Storage abstraction interface for persistence backends |
 | `PersistenceManager` | JSON file-based `IStorageProvider` implementation with debounced async writes (default 500ms) |
 | `OnnxEmbeddingService` | 384-dimensional vector embeddings via bge-micro-v2 ONNX model with FastBertTokenizer |
@@ -214,22 +231,25 @@ dotnet test
 
 ### Tests
 
-16 test files with 250 test cases covering:
+19 test files with 288 test cases covering:
 
 | Test File | Tests | Focus |
 |-----------|-------|-------|
 | `CognitiveIndexTests.cs` | 39 | Vector search, lifecycle filtering, persistence |
 | `IntelligenceTests.cs` | 37 | Duplicate detection, contradictions, reversible collapse, decay tuning, hash embeddings, persistence |
-| `BenchmarkRunnerTests.cs` | 35 | IR metrics (Recall@K, Precision@K, MRR, nDCG@K), 4 benchmark datasets, validation |
+| `BenchmarkRunnerTests.cs` | 35 | IR metrics (Recall@K, Precision@K, MRR, nDCG@K), 4 benchmark datasets, ONNX benchmarks |
 | `CoreMemoryToolsTests.cs` | 20 | Store, search, delete memory tool endpoints |
 | `PhysicsEngineTests.cs` | 19 | Mass computation, gravitational force, slingshot |
 | `AccretionScannerTests.cs` | 18 | DBSCAN clustering, pending collapses |
-| `KnowledgeGraphTests.cs` | 17 | Edge operations, graph traversal |
+| `DebateToolsTests.cs` | 17 | Debate tools: validation, cold-start, expert retrieval, edge creation, resolve lifecycle, full E2E pipeline |
+| `KnowledgeGraphTests.cs` | 17 | Edge operations, graph traversal, batch edge creation |
+| `DebateSessionManagerTests.cs` | 14 | Session management: alias registration, resolution, TTL purge, namespace generation |
 | `ClusterManagerTests.cs` | 14 | Cluster CRUD and centroid operations |
 | `LifecycleEngineTests.cs` | 12 | State transitions, deep recall, decay cycles |
 | `PersistenceManagerTests.cs` | 9 | JSON serialization, debounced saves |
 | `RegressionTests.cs` | 9 | Integration and edge-case scenarios |
 | `MetricsCollectorTests.cs` | 8 | Latency recording, percentile computation, timer pattern |
+| `MaintenanceToolsTests.cs` | 7 | Rebuild embeddings: vector update, metadata preservation, namespace isolation |
 | `AccretionToolsTests.cs` | 7 | Accretion tool functionality |
 | `DecayBackgroundServiceTests.cs` | 2 | Background service decay cycles |
 | `AccretionBackgroundServiceTests.cs` | 2 | Background service lifecycle |

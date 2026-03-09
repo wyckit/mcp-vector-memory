@@ -503,6 +503,35 @@ public sealed class CognitiveIndex : IDisposable
         finally { _lock.ExitWriteLock(); }
     }
 
+    /// <summary>Update lifecycle state for multiple entries in a single write lock acquisition.</summary>
+    public int SetLifecycleStateBatch(IEnumerable<string> ids, string state)
+    {
+        _lock.EnterWriteLock();
+        try
+        {
+            LoadAllNamespacesUnderWrite();
+            int updated = 0;
+            var dirtied = new HashSet<string>();
+            foreach (var id in ids)
+            {
+                foreach (var (ns, entries) in _namespaces)
+                {
+                    if (entries.TryGetValue(id, out var tuple))
+                    {
+                        tuple.Entry.LifecycleState = state;
+                        dirtied.Add(ns);
+                        updated++;
+                        break;
+                    }
+                }
+            }
+            foreach (var ns in dirtied)
+                ScheduleSave(ns);
+            return updated;
+        }
+        finally { _lock.ExitWriteLock(); }
+    }
+
     /// <summary>
     /// Update activation energy and lifecycle state for an entry atomically.
     /// Used by LifecycleEngine to avoid unsynchronized mutation.
@@ -587,6 +616,52 @@ public sealed class CognitiveIndex : IDisposable
             return (stm, ltm, archived);
         }
         finally { _lock.ExitUpgradeableReadLock(); }
+    }
+
+    /// <summary>
+    /// Re-embed all entries in a namespace using the provided embedding service.
+    /// Creates new CognitiveEntry instances with updated vectors while preserving all metadata.
+    /// Entries without text are skipped. Returns (updated, skipped) counts.
+    /// </summary>
+    public (int Updated, int Skipped) RebuildEmbeddings(string ns, IEmbeddingService embedding)
+    {
+        _lock.EnterWriteLock();
+        try
+        {
+            EnsureNamespaceLoadedUnderWrite(ns);
+            if (!_namespaces.TryGetValue(ns, out var entries))
+                return (0, 0);
+
+            int updated = 0, skipped = 0;
+            var ids = entries.Keys.ToList();
+
+            foreach (var id in ids)
+            {
+                var (oldEntry, _) = entries[id];
+                if (string.IsNullOrWhiteSpace(oldEntry.Text))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                float[] newVector = embedding.Embed(oldEntry.Text);
+                var newEntry = new CognitiveEntry(
+                    oldEntry.Id, newVector, oldEntry.Ns, oldEntry.Text,
+                    oldEntry.Category, oldEntry.Metadata, oldEntry.LifecycleState,
+                    oldEntry.CreatedAt, oldEntry.LastAccessedAt, oldEntry.AccessCount,
+                    oldEntry.ActivationEnergy, oldEntry.IsSummaryNode, oldEntry.SourceClusterId);
+
+                entries[id] = (newEntry, Norm(newVector));
+                _bm25.Index(newEntry);
+                updated++;
+            }
+
+            if (updated > 0)
+                ScheduleSave(ns);
+
+            return (updated, skipped);
+        }
+        finally { _lock.ExitWriteLock(); }
     }
 
     public void Dispose()
