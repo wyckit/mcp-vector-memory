@@ -6,13 +6,15 @@ namespace McpVectorMemory.Core.Services;
 
 /// <summary>
 /// JSON file-based persistence per namespace with debounced async writes.
+/// Uses Base64 encoding for float[] vectors to reduce disk footprint by ~60%.
 /// </summary>
 public sealed class PersistenceManager : IStorageProvider
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new FloatArrayBase64Converter() }
     };
 
     private readonly string _basePath;

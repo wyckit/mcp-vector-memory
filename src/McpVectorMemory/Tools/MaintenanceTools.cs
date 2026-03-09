@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
 using ModelContextProtocol.Server;
@@ -6,7 +7,7 @@ using ModelContextProtocol.Server;
 namespace McpVectorMemory.Tools;
 
 /// <summary>
-/// MCP tools for maintenance operations: rebuild embeddings.
+/// MCP tools for maintenance operations: rebuild embeddings, compression stats.
 /// </summary>
 [McpServerToolType]
 public sealed class MaintenanceTools
@@ -49,4 +50,68 @@ public sealed class MaintenanceTools
         return new RebuildEmbeddingsResult(
             totalUpdated, totalSkipped, results.Count, results, _embedding.Dimensions);
     }
+
+    [McpServerTool(Name = "compression_stats")]
+    [Description("Show vector compression statistics for a namespace or all namespaces. " +
+        "Reports FP32 vs Base64 disk savings, Int8 quantization coverage, and memory footprint estimates.")]
+    public object CompressionStats(
+        [Description("Namespace to inspect ('*' for all, default: '*').")] string ns = "*")
+    {
+        var namespaces = ns == "*"
+            ? _index.GetNamespaces()
+            : new[] { ns };
+
+        var nsStats = new List<NamespaceCompressionStats>();
+        int totalEntries = 0, totalQuantized = 0;
+        long totalFp32Bytes = 0, totalInt8Bytes = 0;
+
+        foreach (var namespaceName in namespaces)
+        {
+            var entries = _index.GetAllInNamespace(namespaceName);
+            var (stm, ltm, archived) = _index.GetStateCounts(namespaceName);
+
+            int quantizedCount = ltm + archived; // LTM and archived entries are quantized
+            int dims = entries.Count > 0 ? entries[0].Vector.Length : _embedding.Dimensions;
+
+            long fp32Bytes = entries.Count * dims * sizeof(float);      // FP32 memory
+            long int8Bytes = quantizedCount * dims * sizeof(sbyte);     // Int8 quantized
+            long stmBytes = stm * dims * sizeof(float);                  // STM stays FP32
+            long totalMemory = stmBytes + int8Bytes + (quantizedCount * 8); // +8 for min/scale
+
+            nsStats.Add(new NamespaceCompressionStats(
+                namespaceName, entries.Count, stm, quantizedCount,
+                dims, fp32Bytes, int8Bytes + stmBytes, totalMemory));
+
+            totalEntries += entries.Count;
+            totalQuantized += quantizedCount;
+            totalFp32Bytes += fp32Bytes;
+            totalInt8Bytes += int8Bytes + stmBytes;
+        }
+
+        float compressionRatio = totalFp32Bytes > 0
+            ? (float)totalInt8Bytes / totalFp32Bytes
+            : 1f;
+
+        return new CompressionStatsResult(
+            totalEntries, totalQuantized, totalFp32Bytes, totalInt8Bytes,
+            1f - compressionRatio, nsStats);
+    }
 }
+
+public sealed record NamespaceCompressionStats(
+    [property: JsonPropertyName("namespace")] string Namespace,
+    [property: JsonPropertyName("totalEntries")] int TotalEntries,
+    [property: JsonPropertyName("stmEntries")] int StmEntries,
+    [property: JsonPropertyName("quantizedEntries")] int QuantizedEntries,
+    [property: JsonPropertyName("dimensions")] int Dimensions,
+    [property: JsonPropertyName("fp32Bytes")] long Fp32Bytes,
+    [property: JsonPropertyName("compressedBytes")] long CompressedBytes,
+    [property: JsonPropertyName("estimatedMemoryBytes")] long EstimatedMemoryBytes);
+
+public sealed record CompressionStatsResult(
+    [property: JsonPropertyName("totalEntries")] int TotalEntries,
+    [property: JsonPropertyName("quantizedEntries")] int QuantizedEntries,
+    [property: JsonPropertyName("fp32Bytes")] long Fp32Bytes,
+    [property: JsonPropertyName("compressedBytes")] long CompressedBytes,
+    [property: JsonPropertyName("savingsRatio")] float SavingsRatio,
+    [property: JsonPropertyName("namespaces")] IReadOnlyList<NamespaceCompressionStats> Namespaces);

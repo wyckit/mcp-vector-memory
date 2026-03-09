@@ -5,6 +5,8 @@ namespace McpVectorMemory.Core.Services;
 
 /// <summary>
 /// Thread-safe namespace-partitioned vector index with lifecycle awareness.
+/// Supports Int8 scalar quantization for LTM/archived entries with two-stage search:
+/// fast Int8 screening → FP32 exact reranking.
 ///
 /// Locking strategy:
 /// - Read-only methods use EnterUpgradeableReadLock, upgrading to write only if EnsureNamespaceLoaded needs to load.
@@ -13,12 +15,18 @@ namespace McpVectorMemory.Core.Services;
 /// </summary>
 public sealed class CognitiveIndex : IDisposable
 {
-    private readonly Dictionary<string, Dictionary<string, (CognitiveEntry Entry, float Norm)>> _namespaces = new();
+    private readonly Dictionary<string, Dictionary<string, (CognitiveEntry Entry, float Norm, QuantizedVector? Quantized)>> _namespaces = new();
     private readonly ReaderWriterLockSlim _lock = new();
     private readonly IStorageProvider _persistence;
     private readonly HashSet<string> _loadedNamespaces = new();
     private readonly BM25Index _bm25 = new();
     private readonly TokenReranker _reranker = new();
+
+    /// <summary>Minimum namespace size to activate two-stage Int8 screening.</summary>
+    private const int TwoStageThreshold = 30;
+
+    /// <summary>Candidate pool multiplier for Int8 screening pass.</summary>
+    private const int ScreeningMultiplier = 5;
 
     public CognitiveIndex(IStorageProvider persistence)
     {
@@ -65,11 +73,14 @@ public sealed class CognitiveIndex : IDisposable
         finally { _lock.ExitReadLock(); }
     }
 
-    /// <summary>Add or replace a cognitive entry.</summary>
+    /// <summary>Add or replace a cognitive entry. LTM/archived entries are auto-quantized for fast search.</summary>
     public void Upsert(CognitiveEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
         float norm = Norm(entry.Vector);
+        var quantized = entry.LifecycleState is "ltm" or "archived"
+            ? VectorQuantizer.Quantize(entry.Vector)
+            : null;
 
         _lock.EnterWriteLock();
         try
@@ -80,7 +91,7 @@ public sealed class CognitiveIndex : IDisposable
                 nsEntries = new();
                 _namespaces[entry.Ns] = nsEntries;
             }
-            nsEntries[entry.Id] = (entry, norm);
+            nsEntries[entry.Id] = (entry, norm, quantized);
             _bm25.Index(entry);
             ScheduleSave(entry.Ns);
         }
@@ -141,6 +152,9 @@ public sealed class CognitiveIndex : IDisposable
 
     /// <summary>
     /// Namespace-scoped k-nearest-neighbor search with lifecycle filtering.
+    /// Uses two-stage pipeline for namespaces exceeding TwoStageThreshold:
+    /// 1) Int8 screening pass for quantized entries → top k*5 candidates
+    /// 2) FP32 exact reranking on candidates → final top k
     /// </summary>
     public IReadOnlyList<CognitiveSearchResult> Search(
         float[] query,
@@ -161,7 +175,10 @@ public sealed class CognitiveIndex : IDisposable
         if (queryNorm == 0f)
             throw new ArgumentException("Query vector must not be zero-magnitude.", nameof(query));
 
-        List<(CognitiveEntry entry, float score)> scored;
+        List<(CognitiveEntry entry, float score)> exactScored;
+        List<(CognitiveEntry entry, float approxScore, float norm)>? quantizedCandidates = null;
+        bool useTwoStage;
+
         _lock.EnterUpgradeableReadLock();
         try
         {
@@ -169,8 +186,14 @@ public sealed class CognitiveIndex : IDisposable
             if (!_namespaces.TryGetValue(ns, out var nsEntries))
                 return Array.Empty<CognitiveSearchResult>();
 
-            scored = new(nsEntries.Count);
-            foreach (var (entry, entryNorm) in nsEntries.Values)
+            useTwoStage = nsEntries.Count >= TwoStageThreshold;
+            exactScored = new(nsEntries.Count);
+            QuantizedVector? queryQuantized = null;
+
+            if (useTwoStage)
+                quantizedCandidates = new(nsEntries.Count);
+
+            foreach (var (entry, entryNorm, quantized) in nsEntries.Values)
             {
                 if (!includeStates.Contains(entry.LifecycleState))
                     continue;
@@ -181,19 +204,45 @@ public sealed class CognitiveIndex : IDisposable
                 if (entryNorm == 0f)
                     continue;
 
-                float dot = Dot(query, entry.Vector);
-                float score = dot / (queryNorm * entryNorm);
-
-                if (score >= minScore)
-                    scored.Add((entry, score));
+                if (useTwoStage && quantized is not null)
+                {
+                    // Int8 screening for quantized entries
+                    queryQuantized ??= VectorQuantizer.Quantize(query);
+                    float approxScore = VectorQuantizer.ApproximateCosine(queryQuantized, quantized);
+                    quantizedCandidates!.Add((entry, approxScore, entryNorm));
+                }
+                else
+                {
+                    // Exact FP32 for STM entries (or all entries in small namespaces)
+                    float dot = Dot(query, entry.Vector);
+                    float score = dot / (queryNorm * entryNorm);
+                    if (score >= minScore)
+                        exactScored.Add((entry, score));
+                }
             }
         }
         finally { _lock.ExitUpgradeableReadLock(); }
 
-        // Sorting happens outside the lock on a local list
+        // Stage 2: Rerank top quantized candidates with exact FP32
+        if (quantizedCandidates is { Count: > 0 })
+        {
+            quantizedCandidates.Sort((a, b) => b.approxScore.CompareTo(a.approxScore));
+            int rerankCount = Math.Min(k * ScreeningMultiplier, quantizedCandidates.Count);
+
+            for (int i = 0; i < rerankCount; i++)
+            {
+                var (entry, _, entryNorm) = quantizedCandidates[i];
+                float dot = Dot(query, entry.Vector);
+                float exactScore = dot / (queryNorm * entryNorm);
+                if (exactScore >= minScore)
+                    exactScored.Add((entry, exactScore));
+            }
+        }
+
+        // Sort all exact scores together
         if (summaryFirst)
         {
-            scored.Sort((a, b) =>
+            exactScored.Sort((a, b) =>
             {
                 if (a.entry.IsSummaryNode != b.entry.IsSummaryNode)
                     return a.entry.IsSummaryNode ? -1 : 1;
@@ -202,16 +251,16 @@ public sealed class CognitiveIndex : IDisposable
         }
         else
         {
-            scored.Sort((a, b) => b.score.CompareTo(a.score));
+            exactScored.Sort((a, b) => b.score.CompareTo(a.score));
         }
 
-        int take = Math.Min(k, scored.Count);
+        int take = Math.Min(k, exactScored.Count);
         var results = new CognitiveSearchResult[take];
         for (int i = 0; i < take; i++)
         {
-            var e = scored[i].entry;
+            var e = exactScored[i].entry;
             results[i] = new CognitiveSearchResult(
-                e.Id, e.Text, scored[i].score, e.LifecycleState,
+                e.Id, e.Text, exactScored[i].score, e.LifecycleState,
                 e.ActivationEnergy, e.Category, e.Metadata,
                 e.IsSummaryNode, e.SourceClusterId, e.AccessCount);
         }
@@ -361,7 +410,7 @@ public sealed class CognitiveIndex : IDisposable
                 return Array.Empty<(string, string, float)>();
 
             var duplicates = new List<(string IdA, string IdB, float Similarity)>();
-            foreach (var (id, (entry, norm)) in nsEntries)
+            foreach (var (id, (entry, norm, _)) in nsEntries)
             {
                 if (id == entryId || norm == 0f) continue;
                 if (entry.Vector.Length != target.Entry.Vector.Length) continue;
@@ -392,7 +441,7 @@ public sealed class CognitiveIndex : IDisposable
 
         includeStates ??= new HashSet<string> { "stm", "ltm" };
 
-        List<(CognitiveEntry entry, float norm)> candidates;
+        List<(CognitiveEntry Entry, float Norm, QuantizedVector? Quantized)> candidates;
         _lock.EnterUpgradeableReadLock();
         try
         {
@@ -411,7 +460,7 @@ public sealed class CognitiveIndex : IDisposable
         // Sort by norm ascending — allows early exit when norm ratio makes threshold impossible.
         // For unit-norm vectors this has no effect, but for non-normalized vectors it skips pairs
         // where the Cauchy-Schwarz upper bound (normA * normB) can't reach the threshold.
-        candidates.Sort((a, b) => a.norm.CompareTo(b.norm));
+        candidates.Sort((a, b) => a.Norm.CompareTo(b.Norm));
 
         var duplicates = new List<(string IdA, string IdB, float Similarity)>();
         for (int i = 0; i < candidates.Count && duplicates.Count < maxResults; i++)
@@ -420,13 +469,13 @@ public sealed class CognitiveIndex : IDisposable
             {
                 var a = candidates[i];
                 var b = candidates[j];
-                if (a.entry.Vector.Length != b.entry.Vector.Length) continue;
+                if (a.Entry.Vector.Length != b.Entry.Vector.Length) continue;
 
-                float dot = Dot(a.entry.Vector, b.entry.Vector);
-                float sim = dot / (a.norm * b.norm);
+                float dot = Dot(a.Entry.Vector, b.Entry.Vector);
+                float sim = dot / (a.Norm * b.Norm);
 
                 if (sim >= threshold)
-                    duplicates.Add((a.entry.Id, b.entry.Id, sim));
+                    duplicates.Add((a.Entry.Id, b.Entry.Id, sim));
             }
         }
 
@@ -482,7 +531,7 @@ public sealed class CognitiveIndex : IDisposable
         finally { _lock.ExitWriteLock(); }
     }
 
-    /// <summary>Update an entry's lifecycle state.</summary>
+    /// <summary>Update an entry's lifecycle state. Quantizes on STM→LTM, dequantizes on →STM.</summary>
     public bool SetLifecycleState(string id, string state)
     {
         _lock.EnterWriteLock();
@@ -493,7 +542,9 @@ public sealed class CognitiveIndex : IDisposable
             {
                 if (entries.TryGetValue(id, out var tuple))
                 {
+                    var previousState = tuple.Entry.LifecycleState;
                     tuple.Entry.LifecycleState = state;
+                    UpdateQuantization(entries, id, tuple, previousState, state);
                     ScheduleSave(ns);
                     return true;
                 }
@@ -518,7 +569,9 @@ public sealed class CognitiveIndex : IDisposable
                 {
                     if (entries.TryGetValue(id, out var tuple))
                     {
+                        var previousState = tuple.Entry.LifecycleState;
                         tuple.Entry.LifecycleState = state;
+                        UpdateQuantization(entries, id, tuple, previousState, state);
                         dirtied.Add(ns);
                         updated++;
                         break;
@@ -535,6 +588,7 @@ public sealed class CognitiveIndex : IDisposable
     /// <summary>
     /// Update activation energy and lifecycle state for an entry atomically.
     /// Used by LifecycleEngine to avoid unsynchronized mutation.
+    /// Quantizes on STM→LTM transition, dequantizes on →STM promotion.
     /// </summary>
     public bool SetActivationEnergyAndState(string id, float activationEnergy, string? newState = null)
     {
@@ -546,9 +600,13 @@ public sealed class CognitiveIndex : IDisposable
             {
                 if (entries.TryGetValue(id, out var tuple))
                 {
+                    var previousState = tuple.Entry.LifecycleState;
                     tuple.Entry.ActivationEnergy = activationEnergy;
                     if (newState is not null)
+                    {
                         tuple.Entry.LifecycleState = newState;
+                        UpdateQuantization(entries, id, tuple, previousState, newState);
+                    }
                     ScheduleSave(ns);
                     return true;
                 }
@@ -637,7 +695,7 @@ public sealed class CognitiveIndex : IDisposable
 
             foreach (var id in ids)
             {
-                var (oldEntry, _) = entries[id];
+                var (oldEntry, _, _) = entries[id];
                 if (string.IsNullOrWhiteSpace(oldEntry.Text))
                 {
                     skipped++;
@@ -651,7 +709,10 @@ public sealed class CognitiveIndex : IDisposable
                     oldEntry.CreatedAt, oldEntry.LastAccessedAt, oldEntry.AccessCount,
                     oldEntry.ActivationEnergy, oldEntry.IsSummaryNode, oldEntry.SourceClusterId);
 
-                entries[id] = (newEntry, Norm(newVector));
+                var quantized = newEntry.LifecycleState is "ltm" or "archived"
+                    ? VectorQuantizer.Quantize(newVector)
+                    : null;
+                entries[id] = (newEntry, Norm(newVector), quantized);
                 _bm25.Index(newEntry);
                 updated++;
             }
@@ -688,11 +749,7 @@ public sealed class CognitiveIndex : IDisposable
             if (!_namespaces.ContainsKey(ns))
                 _namespaces[ns] = new();
 
-            foreach (var entry in data.Entries)
-            {
-                float norm = Norm(entry.Vector);
-                _namespaces[ns][entry.Id] = (entry, norm);
-            }
+            LoadEntries(ns, data.Entries);
 
             // Build BM25 index for this namespace
             if (!_bm25.HasNamespace(ns))
@@ -714,17 +771,26 @@ public sealed class CognitiveIndex : IDisposable
         if (!_namespaces.ContainsKey(ns))
             _namespaces[ns] = new();
 
-        foreach (var entry in data.Entries)
-        {
-            float norm = Norm(entry.Vector);
-            _namespaces[ns][entry.Id] = (entry, norm);
-        }
+        LoadEntries(ns, data.Entries);
 
         // Build BM25 index for this namespace
         if (!_bm25.HasNamespace(ns))
             _bm25.RebuildNamespace(ns, data.Entries);
 
         _loadedNamespaces.Add(ns);
+    }
+
+    // Load entries into the in-memory index, auto-quantizing LTM/archived entries.
+    private void LoadEntries(string ns, List<CognitiveEntry> entries)
+    {
+        foreach (var entry in entries)
+        {
+            float norm = Norm(entry.Vector);
+            var quantized = entry.LifecycleState is "ltm" or "archived"
+                ? VectorQuantizer.Quantize(entry.Vector)
+                : null;
+            _namespaces[ns][entry.Id] = (entry, norm, quantized);
+        }
     }
 
     // Load all namespaces. Called under upgradeable read lock.
@@ -751,6 +817,29 @@ public sealed class CognitiveIndex : IDisposable
             data.Entries = entries.Values.Select(t => t.Entry).ToList();
 
         _persistence.ScheduleSave(ns, () => data);
+    }
+
+    // Update quantization state when an entry's lifecycle state changes.
+    // Quantize on STM → LTM/archived; clear quantization on → STM.
+    private static void UpdateQuantization(
+        Dictionary<string, (CognitiveEntry Entry, float Norm, QuantizedVector? Quantized)> entries,
+        string id,
+        (CognitiveEntry Entry, float Norm, QuantizedVector? Quantized) tuple,
+        string previousState, string newState)
+    {
+        bool wasQuantizable = previousState is "ltm" or "archived";
+        bool isQuantizable = newState is "ltm" or "archived";
+
+        if (!wasQuantizable && isQuantizable && tuple.Quantized is null)
+        {
+            // STM → LTM/archived: quantize
+            entries[id] = (tuple.Entry, tuple.Norm, VectorQuantizer.Quantize(tuple.Entry.Vector));
+        }
+        else if (wasQuantizable && !isQuantizable && tuple.Quantized is not null)
+        {
+            // LTM/archived → STM: remove quantization for full precision
+            entries[id] = (tuple.Entry, tuple.Norm, null);
+        }
     }
 
     // ── SIMD-accelerated vector math ──
