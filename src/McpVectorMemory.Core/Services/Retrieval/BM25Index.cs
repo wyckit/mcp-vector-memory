@@ -1,6 +1,6 @@
 using McpVectorMemory.Core.Models;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Retrieval;
 
 /// <summary>
 /// BM25 keyword index for hybrid search alongside vector similarity.

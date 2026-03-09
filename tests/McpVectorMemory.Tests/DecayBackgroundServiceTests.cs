@@ -1,5 +1,7 @@
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Lifecycle;
+using McpVectorMemory.Core.Services.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace McpVectorMemory.Tests;

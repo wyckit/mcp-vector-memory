@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Lifecycle;
 
 /// <summary>
 /// Background service that runs decay cycles on all namespaces at a regular interval.

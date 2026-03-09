@@ -1,5 +1,7 @@
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Graph;
+using McpVectorMemory.Core.Services.Storage;
 
 namespace McpVectorMemory.Tests;
 
@@ -172,6 +174,47 @@ public class KnowledgeGraphTests : IDisposable
 
         var edges = _graph.GetEdgesForEntry("a");
         Assert.Equal(2, edges.Count);
+    }
+
+    [Fact]
+    public void TransferEdges_MovesOutgoingAndIncoming()
+    {
+        _graph.AddEdge(new GraphEdge("a", "b", "similar_to"));
+        _graph.AddEdge(new GraphEdge("a", "c", "depends_on"));
+        _graph.AddEdge(new GraphEdge("c", "a", "elaborates"));
+
+        int transferred = _graph.TransferEdges("a", "b");
+
+        // a->c and c->a should now be b->c and c->b
+        Assert.Equal(2, transferred);
+
+        var bEdges = _graph.GetEdgesForEntry("b");
+        Assert.Contains(bEdges, e => e.SourceId == "b" && e.TargetId == "c" && e.Relation == "depends_on");
+        Assert.Contains(bEdges, e => e.SourceId == "c" && e.TargetId == "b" && e.Relation == "elaborates");
+
+        // a should have no edges left
+        var aEdges = _graph.GetEdgesForEntry("a");
+        Assert.Empty(aEdges);
+    }
+
+    [Fact]
+    public void TransferEdges_SkipsSelfReferential()
+    {
+        // a->b edge: transferring a to b would make b->b (self-referential), so it should be skipped
+        _graph.AddEdge(new GraphEdge("a", "b", "similar_to"));
+        _graph.AddEdge(new GraphEdge("a", "c", "depends_on"));
+
+        int transferred = _graph.TransferEdges("a", "b");
+
+        // Only a->c should transfer (a->b skipped as it would become b->b)
+        Assert.Equal(1, transferred);
+    }
+
+    [Fact]
+    public void TransferEdges_NoEdges_ReturnsZero()
+    {
+        int transferred = _graph.TransferEdges("a", "b");
+        Assert.Equal(0, transferred);
     }
 
     [Fact]

@@ -1,5 +1,7 @@
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Intelligence;
+using McpVectorMemory.Core.Services.Storage;
 
 namespace McpVectorMemory.Tests;
 
@@ -151,6 +153,37 @@ public class ClusterManagerTests : IDisposable
 
         var clusters = _clusters.GetClustersForEntry("b");
         Assert.Equal(2, clusters.Count);
+    }
+
+    [Fact]
+    public void TransferMembership_MovesMemberAcrossClusters()
+    {
+        _clusters.CreateCluster("c1", "test", new[] { "a", "b" });
+        _clusters.CreateCluster("c2", "test", new[] { "a", "c" });
+
+        int transferred = _clusters.TransferMembership("a", "b");
+
+        Assert.Equal(2, transferred);
+
+        // c1: had a,b → now just b (a removed, b already present)
+        var c1 = _clusters.GetCluster("c1");
+        Assert.Equal(1, c1!.MemberCount);
+        Assert.Contains(c1.Members, m => m.Id == "b");
+
+        // c2: had a,c → now b,c (a replaced by b)
+        var c2 = _clusters.GetCluster("c2");
+        Assert.Equal(2, c2!.MemberCount);
+        Assert.Contains(c2.Members, m => m.Id == "b");
+        Assert.Contains(c2.Members, m => m.Id == "c");
+    }
+
+    [Fact]
+    public void TransferMembership_NoMembership_ReturnsZero()
+    {
+        _clusters.CreateCluster("c1", "test", new[] { "a", "b" });
+
+        int transferred = _clusters.TransferMembership("c", "a");
+        Assert.Equal(0, transferred);
     }
 
     [Fact]

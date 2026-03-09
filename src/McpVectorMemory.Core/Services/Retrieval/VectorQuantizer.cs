@@ -1,7 +1,7 @@
 using System.Numerics;
 using McpVectorMemory.Core.Models;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Retrieval;
 
 /// <summary>
 /// Scalar quantization (FP32 → Int8) with SIMD-accelerated Int8 dot product.

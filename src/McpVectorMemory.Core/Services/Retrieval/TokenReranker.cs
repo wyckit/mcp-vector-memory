@@ -1,13 +1,13 @@
 using McpVectorMemory.Core.Models;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Retrieval;
 
 /// <summary>
 /// Lightweight reranker that re-scores top-K search results using token-level analysis.
 /// Combines cosine similarity with term overlap, exact match boosting, and position awareness
 /// to improve precision without requiring a cross-encoder model.
 /// </summary>
-public sealed class TokenReranker
+public sealed class TokenReranker : IReranker
 {
     // Weight for blending cosine score with reranker score
     private const float CosineWeight = 0.6f;

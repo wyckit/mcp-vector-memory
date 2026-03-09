@@ -1,6 +1,9 @@
 using McpVectorMemory.Core.Models;
+using McpVectorMemory.Core.Services.Lifecycle;
+using McpVectorMemory.Core.Services.Retrieval;
+using McpVectorMemory.Core.Services.Storage;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Intelligence;
 
 /// <summary>
 /// Manages DBSCAN density scanning of LTM-tier entries and pending collapse state.
@@ -311,7 +314,7 @@ public sealed class AccretionScanner
         // Precompute norms
         var norms = new float[entries.Count];
         for (int i = 0; i < entries.Count; i++)
-            norms[i] = CognitiveIndex.Norm(entries[i].Vector);
+            norms[i] = VectorMath.Norm(entries[i].Vector);
 
         // Labels: -1 = unvisited, 0 = noise, >0 = cluster ID
         var labels = new int[entries.Count];
@@ -382,7 +385,7 @@ public sealed class AccretionScanner
             if (norms[i] == 0f) continue;
             if (entries[i].Vector.Length != pointVector.Length) continue;
 
-            float dot = CognitiveIndex.Dot(pointVector, entries[i].Vector);
+            float dot = VectorMath.Dot(pointVector, entries[i].Vector);
             float cosine = dot / (pointNorm * norms[i]);
             float distance = 1f - cosine;
 

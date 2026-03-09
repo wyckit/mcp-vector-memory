@@ -1,5 +1,6 @@
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Storage;
 
 namespace McpVectorMemory.Tests;
 
@@ -426,6 +427,61 @@ public class CognitiveIndexTests : IDisposable
         Assert.Equal("work entry", workEntry.Text);
         Assert.NotNull(personalEntry);
         Assert.Equal("personal entry", personalEntry.Text);
+    }
+
+    // ── Memory Limits ──
+
+    [Fact]
+    public void Upsert_MaxNamespaceSize_RejectsWhenFull()
+    {
+        var limits = new MemoryLimitsConfig(MaxNamespaceSize: 2);
+        using var limitedIndex = new CognitiveIndex(_persistence, limits);
+
+        limitedIndex.Upsert(MakeEntry("a", new[] { 1f, 0f }));
+        limitedIndex.Upsert(MakeEntry("b", new[] { 0f, 1f }));
+
+        // Third entry should fail
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            limitedIndex.Upsert(MakeEntry("c", new[] { 1f, 1f })));
+        Assert.Contains("namespace", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Upsert_MaxNamespaceSize_AllowsUpdate()
+    {
+        var limits = new MemoryLimitsConfig(MaxNamespaceSize: 2);
+        using var limitedIndex = new CognitiveIndex(_persistence, limits);
+
+        limitedIndex.Upsert(MakeEntry("a", new[] { 1f, 0f }));
+        limitedIndex.Upsert(MakeEntry("b", new[] { 0f, 1f }));
+
+        // Updating existing entry should succeed even at capacity
+        limitedIndex.Upsert(MakeEntry("a", new[] { 0.5f, 0.5f }));
+        Assert.Equal(2, limitedIndex.CountInNamespace("test"));
+    }
+
+    [Fact]
+    public void Upsert_MaxTotalCount_RejectsWhenFull()
+    {
+        var limits = new MemoryLimitsConfig(MaxTotalCount: 2);
+        using var limitedIndex = new CognitiveIndex(_persistence, limits);
+
+        limitedIndex.Upsert(MakeEntry("a", new[] { 1f, 0f }, "ns1"));
+        limitedIndex.Upsert(MakeEntry("b", new[] { 0f, 1f }, "ns2"));
+
+        // Third entry in a new namespace should fail
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            limitedIndex.Upsert(MakeEntry("c", new[] { 1f, 1f }, "ns3")));
+        Assert.Contains("total", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Upsert_NoLimits_AcceptsUnlimited()
+    {
+        // Default limits (int.MaxValue) should not restrict
+        for (int i = 0; i < 100; i++)
+            _index.Upsert(MakeEntry($"e{i}", new[] { (float)i, 0f }));
+        Assert.Equal(100, _index.CountInNamespace("test"));
     }
 
     // ── Helper ──

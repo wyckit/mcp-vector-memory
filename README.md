@@ -13,16 +13,50 @@ The solution is split into two projects:
 
 ```
 src/
-  McpVectorMemory/           # MCP server (Program.cs + Tool classes)
-  McpVectorMemory.Core/      # Core library (Models + Services)
+  McpVectorMemory/              # MCP server (Program.cs + Tool classes)
+  McpVectorMemory.Core/         # Core library
+    Models/                     # CognitiveEntry, SearchResults, MemoryLimitsConfig, etc.
+    Services/
+      CognitiveIndex.cs         # Thin facade: CRUD, locking, delegates to engines below
+      NamespaceStore.cs         # Namespace-partitioned storage with lazy loading
+      PhysicsEngine.cs          # Gravitational force re-ranking
+      Retrieval/                # Search pipeline
+        VectorMath.cs           #   SIMD-accelerated dot product & norm
+        VectorSearchEngine.cs   #   Two-stage Int8 screening + FP32 reranking
+        HybridSearchEngine.cs   #   BM25 + vector RRF fusion
+        BM25Index.cs            #   Keyword search index
+        QueryExpander.cs        #   IDF-based query term expansion
+        TokenReranker.cs        #   Token-overlap reranker (implements IReranker)
+        VectorQuantizer.cs      #   Int8 scalar quantization
+        IReranker.cs            #   Pluggable reranker interface
+      Graph/
+        KnowledgeGraph.cs       #   Directed graph with adjacency lists
+      Intelligence/
+        ClusterManager.cs       #   Semantic cluster CRUD + centroid computation
+        AccretionScanner.cs     #   DBSCAN density scanning + reversible collapse
+        DuplicateDetector.cs    #   Pairwise cosine similarity duplicate detection
+        AccretionBackgroundService.cs
+      Lifecycle/
+        LifecycleEngine.cs      #   Decay, state transitions, deep recall
+        DecayBackgroundService.cs
+      Experts/
+        ExpertDispatcher.cs     #   Semantic routing to expert namespaces
+        DebateSessionManager.cs #   Debate session state + alias mapping
+      Evaluation/
+        BenchmarkRunner.cs      #   IR quality benchmarks
+        MetricsCollector.cs     #   Operational metrics + percentiles
+      Storage/
+        IStorageProvider.cs     #   Storage abstraction interface
+        PersistenceManager.cs   #   JSON file backend with debounced writes
+        SqliteStorageProvider.cs #   SQLite backend with WAL mode
 tests/
-  McpVectorMemory.Tests/     # xUnit tests
+  McpVectorMemory.Tests/        # xUnit tests (397 tests)
 benchmarks/
-  baseline-v1.json           # IR quality baseline (MRR 1.0, nDCG@5 0.938, Recall@5 0.867)
+  baseline-v1.json              # IR quality baseline (MRR 1.0, nDCG@5 0.938, Recall@5 0.867)
   baseline-paraphrase-v1.json
   baseline-multihop-v1.json
   baseline-scale-v1.json
-  ideas/                     # Benchmark proposals and analysis
+  ideas/                        # Benchmark proposals and analysis
 ```
 
 ## NuGet Package
@@ -38,6 +72,10 @@ dotnet add package McpVectorMemory.Core --version 0.2.0
 ```csharp
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Graph;
+using McpVectorMemory.Core.Services.Intelligence;
+using McpVectorMemory.Core.Services.Lifecycle;
+using McpVectorMemory.Core.Services.Storage;
 
 // Create services
 var persistence = new PersistenceManager();
@@ -63,11 +101,12 @@ var results = index.Search(queryVector, "default", k: 5);
 - [ModelContextProtocol](https://www.nuget.org/packages/ModelContextProtocol) 1.0.0
 - [FastBertTokenizer](https://www.nuget.org/packages/FastBertTokenizer) 0.4.67 (WordPiece tokenization)
 - [Microsoft.ML.OnnxRuntime](https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime) 1.17.0 (ONNX model inference)
+- [Microsoft.Data.Sqlite](https://www.nuget.org/packages/Microsoft.Data.Sqlite) 8.0.11 (SQLite storage backend)
 - [bge-micro-v2](https://huggingface.co/TaylorAI/bge-micro-v2) ONNX model (384-dimensional vectors, MIT license, downloaded at build time)
 - Microsoft.Extensions.Hosting 8.0.1
 - xUnit (tests)
 
-## MCP Tools (36 total)
+## MCP Tools (37 total)
 
 ### Core Memory (3 tools)
 
@@ -130,12 +169,13 @@ Activation energy formula: `(accessCount x reinforcementWeight) - (hoursSinceLas
 - If summary storage or any member archival step fails, the tool returns an error and preserves the pending collapse so the same `collapseId` can be retried.
 - Collapse records survive server restarts and can be reversed with `uncollapse_cluster`.
 
-### Intelligence & Safety (4 tools)
+### Intelligence & Safety (5 tools)
 
 | Tool | Description |
 |------|-------------|
 | `detect_duplicates` | Find near-duplicate entries in a namespace by pairwise cosine similarity above a configurable threshold. |
 | `find_contradictions` | Surface contradictions: entries linked with `contradicts` graph edges, plus high-similarity topic-relevant pairs for review. |
+| `merge_memories` | Merge two duplicate entries: keeps the first entry's vector, combines metadata and access counts, transfers graph edges and cluster memberships, and archives the second entry. |
 | `uncollapse_cluster` | Reverse a previously executed accretion collapse: restore archived members to pre-collapse state, delete summary, clean up cluster. |
 | `list_collapse_history` | List all reversible collapse records for a namespace. |
 
@@ -179,23 +219,33 @@ Expert routing workflow: `dispatch_task` (route query) → if miss: `create_expe
 
 ### Services
 
-| Service | Description |
-|---------|-------------|
-| `CognitiveIndex` | Thread-safe namespace-partitioned vector index with two-stage search (Int8 screening + FP32 reranking), lifecycle filtering, duplicate detection, and access tracking |
-| `KnowledgeGraph` | In-memory directed graph with adjacency lists, bidirectional edge support, and contradiction surfacing |
-| `ClusterManager` | Semantic cluster CRUD with automatic centroid computation |
-| `LifecycleEngine` | Activation energy computation, per-namespace decay configs, decay cycles, and state transitions (STM/LTM/archived) |
-| `PhysicsEngine` | Gravitational force re-ranking with "Asteroid" (semantic) + "Sun" (importance) output |
-| `AccretionScanner` | DBSCAN-based density scanning with reversible collapse history (persisted to disk) |
-| `BenchmarkRunner` | IR quality benchmark execution with Recall@K, Precision@K, MRR, nDCG@K scoring |
-| `MetricsCollector` | Thread-safe operational metrics with P50/P95/P99 latency percentiles |
-| `DebateSessionManager` | Volatile in-memory session state for debate workflows with integer alias mapping and 1-hour TTL auto-purge |
-| `ExpertDispatcher` | Semantic routing engine that maps queries to specialized expert namespaces via a hidden meta-index with JIT expert instantiation |
-| `VectorQuantizer` | Static Int8 scalar quantization: `Quantize`, `Dequantize`, SIMD-accelerated `Int8DotProduct`, `ApproximateCosine` |
-| `IStorageProvider` | Storage abstraction interface for persistence backends |
-| `PersistenceManager` | JSON file-based `IStorageProvider` implementation with debounced async writes (default 500ms) |
-| `OnnxEmbeddingService` | 384-dimensional vector embeddings via bge-micro-v2 ONNX model with FastBertTokenizer |
-| `HashEmbeddingService` | Deterministic hash-based embeddings for testing/CI (no model dependency) |
+`CognitiveIndex` is a thin facade managing CRUD, locking, and memory limits. Search, hybrid search, and duplicate detection are delegated to stateless engines that operate on data snapshots.
+
+| Service | Namespace | Description |
+|---------|-----------|-------------|
+| `CognitiveIndex` | `Services` | Thread-safe facade: CRUD, lifecycle state, access tracking, memory limits enforcement. Delegates search to engines below |
+| `NamespaceStore` | `Services` | Namespace-partitioned storage with lazy loading from disk and BM25 indexing |
+| `VectorSearchEngine` | `Retrieval` | Stateless k-NN search with two-stage Int8 screening (top k×5 candidates) → FP32 exact reranking |
+| `HybridSearchEngine` | `Retrieval` | Stateless BM25 + vector fusion via Reciprocal Rank Fusion (RRF) |
+| `BM25Index` | `Retrieval` | In-memory keyword search index with TF-IDF scoring |
+| `QueryExpander` | `Retrieval` | IDF-based query term expansion for improved recall |
+| `TokenReranker` | `Retrieval` | Token-overlap reranker implementing `IReranker` |
+| `VectorMath` | `Retrieval` | SIMD-accelerated dot product and norm (static utility) |
+| `VectorQuantizer` | `Retrieval` | Int8 scalar quantization: `Quantize`, `Dequantize`, SIMD `Int8DotProduct`, `ApproximateCosine` |
+| `DuplicateDetector` | `Intelligence` | Stateless pairwise cosine similarity duplicate detection (O(N) single-entry, O(N²) namespace-wide) |
+| `KnowledgeGraph` | `Graph` | In-memory directed graph with adjacency lists, bidirectional edge support, edge transfer, and contradiction surfacing |
+| `ClusterManager` | `Intelligence` | Semantic cluster CRUD with automatic centroid computation and membership transfer |
+| `AccretionScanner` | `Intelligence` | DBSCAN-based density scanning with reversible collapse history (persisted to disk) |
+| `LifecycleEngine` | `Lifecycle` | Activation energy computation, per-namespace decay configs, decay cycles, and state transitions (STM/LTM/archived) |
+| `PhysicsEngine` | `Services` | Gravitational force re-ranking with "Asteroid" (semantic) + "Sun" (importance) output |
+| `BenchmarkRunner` | `Evaluation` | IR quality benchmark execution with Recall@K, Precision@K, MRR, nDCG@K scoring |
+| `MetricsCollector` | `Evaluation` | Thread-safe operational metrics with P50/P95/P99 latency percentiles |
+| `DebateSessionManager` | `Experts` | Volatile in-memory session state for debate workflows with integer alias mapping and 1-hour TTL auto-purge |
+| `ExpertDispatcher` | `Experts` | Semantic routing engine that maps queries to specialized expert namespaces via a hidden meta-index |
+| `PersistenceManager` | `Storage` | JSON file-based `IStorageProvider` with debounced async writes, SHA-256 checksums, and crash recovery |
+| `SqliteStorageProvider` | `Storage` | SQLite-based `IStorageProvider` with WAL mode for concurrent read/write |
+| `OnnxEmbeddingService` | `Services` | 384-dimensional vector embeddings via bge-micro-v2 ONNX model with FastBertTokenizer |
+| `HashEmbeddingService` | `Services` | Deterministic hash-based embeddings for testing/CI (no model dependency) |
 
 ### Background Services
 
@@ -225,14 +275,30 @@ Vectors use a lifecycle-driven compression pipeline:
 
 ### Persistence
 
-Data is stored as JSON files in a `data/` directory:
+Two storage backends are available, selectable via environment variable:
+
+**JSON file backend** (default):
+- Data stored in a `data/` directory as JSON files
 - `{namespace}.json` — entries with Base64-encoded vectors (per namespace)
 - `_edges.json` — graph edges (global)
 - `_clusters.json` — semantic clusters (global)
 - `_collapse_history.json` — reversible collapse records (global)
 - `_decay_configs.json` — per-namespace decay configurations (global)
+- Writes are debounced (500ms default) with SHA-256 checksums for crash recovery
 
-Writes are debounced (500ms default) to avoid excessive disk I/O.
+**SQLite backend** (`MEMORY_STORAGE=sqlite`):
+- Single `memory.db` file with WAL mode for concurrent read/write
+- Tables: `entries`, `edges`, `clusters`, `collapse_history`, `decay_configs`
+- Suitable for higher-throughput or multi-process scenarios
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEMORY_STORAGE` | `json` | Storage backend: `json` or `sqlite` |
+| `MEMORY_SQLITE_PATH` | `data/memory.db` | SQLite database file path (only when `MEMORY_STORAGE=sqlite`) |
+| `MEMORY_MAX_NAMESPACE_SIZE` | unlimited | Maximum entries per namespace |
+| `MEMORY_MAX_TOTAL_COUNT` | unlimited | Maximum total entries across all namespaces |
 
 ## Usage
 
@@ -245,11 +311,17 @@ Configure the MCP server in your client (e.g. Claude Desktop, VS Code):
   "mcpServers": {
     "vector-memory": {
       "command": "dotnet",
-      "args": ["run", "--project", "/path/to/mcp-vector-memory/src/McpVectorMemory"]
+      "args": ["run", "--project", "/path/to/mcp-vector-memory/src/McpVectorMemory"],
+      "env": {
+        "MEMORY_STORAGE": "sqlite",
+        "MEMORY_MAX_NAMESPACE_SIZE": "10000"
+      }
     }
   }
 }
 ```
+
+The `env` block is optional. Omit it to use the JSON file backend with no memory limits.
 
 ## AI Assistant Setup
 
@@ -266,27 +338,45 @@ Set up mcp-vector-memory as my persistent memory system. Do the following:
    command: dotnet
    args: run --project /path/to/mcp-vector-memory/src/McpVectorMemory
 
-2. Create or update my CLAUDE.md (global at ~/.claude/CLAUDE.md) with vector memory instructions:
+2. Create or update my CLAUDE.md (global at ~/.claude/CLAUDE.md) with these sections:
+
+   ## Recall: Search Before You Work
    - At conversation start, search vector memory using up to 3 parallel agents:
      Agent 1: search_memory in the project namespace for the current task
+       (use hybrid: true and expandGraph: true for richer recall)
      Agent 2: search_memory in "work" and "synthesis" namespaces for cross-project patterns
      Agent 3: search_memory with alternative phrasings/keywords in the project namespace
-   - Tool selection: use search_memory for project context, dispatch_task for cross-domain
+       (use hybrid: true for keyword+vector fusion)
+   - For graph-connected knowledge, use expandGraph: true to pull in linked memories
+   - Tool selection: search_memory for project context, dispatch_task for cross-domain
      questions, consult_expert_panel for multi-perspective analysis, deep_recall for
      archived knowledge, detect_duplicates and find_contradictions for quality checks
+
+   ## Store: Save What You Learn
    - Store memories after completing tasks, fixing bugs, learning patterns, or receiving
      corrections. Use the project directory name as namespace, kebab-case IDs, include
      domain keywords in text for searchability, and categorize as one of: decision, pattern,
      bug-fix, architecture, preference, lesson, reference
-   - Expert routing: use dispatch_task for open-ended questions. If it returns needs_expert,
-     call create_expert with a detailed persona, then seed that expert's namespace with
-     store_memory
+   - Pre-store quality checks: verify text is self-contained, includes domain keywords,
+     doesn't duplicate existing memories, and has the correct category
+   - When store_memory warns about duplicates: skip if existing is accurate, upsert same
+     ID if outdated, or store and link if both are distinct
+
+   ## Expert Routing
+   - Use dispatch_task for open-ended questions. If it returns needs_expert,
+     call create_expert with a detailed persona, then seed that expert's namespace
    - Lifecycle: promote STM to LTM when recalled 2+ times, documents a stable pattern,
      captures a recurring bug fix, or records a user correction
    - Link related memories with link_memories using: parent_child, cross_reference,
      similar_to, contradicts, elaborates, depends_on
-   - When store_memory warns about duplicates: skip if existing is accurate, upsert same
-     ID if outdated, or store and link if both are distinct
+
+   ## Session Retrospective
+   - At the end of significant sessions, self-evaluate: what went well, what went wrong,
+     what you'd do differently, key decisions made
+   - Store retrospective with: id "retro-YYYY-MM-DD-topic", category "lesson",
+     specific actionable lessons (not vague observations)
+   - Link retrospectives to related bug fixes, patterns, or decisions
+   - Search past retrospectives before starting similar work
 
 Confirm each file you create and show me the final contents.
 ```
@@ -304,60 +394,85 @@ Set up mcp-vector-memory as my persistent memory system. Do the following:
    args: ["run", "--project", "/path/to/mcp-vector-memory/src/McpVectorMemory"]
 
 2. Create .github/copilot-instructions.md with vector memory instructions:
+
+   ## Recall
    - Before starting any task, use search_memory with the project namespace to recall
-     relevant context. Search for past decisions and bugs before answering questions.
+     relevant context. Use hybrid: true for keyword+vector fusion and expandGraph: true
+     to pull in linked memories. Search for past decisions and bugs before answering.
    - Tool selection: search_memory for project context, dispatch_task for cross-domain
      questions (auto-routes to best expert namespace), consult_expert_panel for multiple
      perspectives, deep_recall for archived/forgotten knowledge, detect_duplicates and
      find_contradictions for memory quality.
+
+   ## Store
    - Store memories after completing tasks, fixing bugs, learning patterns, or receiving
      corrections. Use project directory name as namespace, kebab-case IDs, write text
      with domain keywords for future searchability, categorize as: decision, pattern,
      bug-fix, architecture, preference, lesson, reference.
-   - Expert routing: dispatch_task routes to experts automatically. If needs_expert is
-     returned, use create_expert with a detailed persona description, then populate the
-     expert namespace with store_memory.
-   - Lifecycle: new memories start as STM. Promote to LTM when stable and reused across
-     sessions. Link related memories with link_memories using relation types: parent_child,
-     cross_reference, similar_to, contradicts, elaborates, depends_on.
+   - Pre-store quality checks: verify text is self-contained, includes domain keywords,
+     doesn't duplicate existing memories, and has the correct category.
    - On duplicate warnings: skip if existing is accurate, upsert if outdated, store and
      link if both are distinct.
+
+   ## Expert Routing
+   - dispatch_task routes to experts automatically. If needs_expert is returned, use
+     create_expert with a detailed persona description, then populate the expert namespace.
+   - Lifecycle: promote STM to LTM when stable and reused across sessions.
+   - Link related memories using: parent_child, cross_reference, similar_to, contradicts,
+     elaborates, depends_on.
+
+   ## Session Retrospective
+   - At the end of significant sessions, store a self-evaluation: what went well, what
+     went wrong, lessons learned. Use id "retro-YYYY-MM-DD-topic", category "lesson".
+   - Search past retrospectives before starting similar work to avoid repeating mistakes.
 
 Confirm each file you create and show me the final contents.
 ```
 
-### Google Antigravity Setup
+### Google Gemini CLI Setup
 
-Open Antigravity and paste in chat:
+Open Gemini CLI and paste in chat:
 
 ```
 Set up mcp-vector-memory as my persistent memory system. Do the following:
 
-1. Add the MCP server to my Antigravity config (Settings > MCP, or edit
-   ~/.gemini/antigravity/mcp_config.json):
+1. Add the MCP server to my Gemini CLI config (edit ~/.gemini/settings.json):
    name: vector-memory
    command: dotnet
    args: ["run", "--project", "/path/to/mcp-vector-memory/src/McpVectorMemory"]
 
 2. Create GEMINI.md in my workspace root with vector memory instructions:
+
+   ## Recall
    - Before starting any task, use search_memory with the project namespace to recall
-     relevant context. Search for past decisions and bugs before answering questions.
+     relevant context. Use hybrid: true for keyword+vector fusion and expandGraph: true
+     to pull in linked memories. Search for past decisions and bugs before answering.
    - Tool selection: search_memory for project context, dispatch_task for cross-domain
      questions (auto-routes to best expert namespace), consult_expert_panel for multiple
      perspectives, deep_recall for archived/forgotten knowledge, detect_duplicates and
      find_contradictions for memory quality.
+
+   ## Store
    - Store memories after completing tasks, fixing bugs, learning patterns, or receiving
      corrections. Use project directory name as namespace, kebab-case IDs, write text
      with domain keywords for future searchability, categorize as: decision, pattern,
      bug-fix, architecture, preference, lesson, reference.
-   - Expert routing: dispatch_task routes to experts automatically. If needs_expert is
-     returned, use create_expert with a detailed persona description, then populate the
-     expert namespace with store_memory.
-   - Lifecycle: new memories start as STM. Promote to LTM when stable and reused across
-     sessions. Link related memories with link_memories using relation types: parent_child,
-     cross_reference, similar_to, contradicts, elaborates, depends_on.
+   - Pre-store quality checks: verify text is self-contained, includes domain keywords,
+     doesn't duplicate existing memories, and has the correct category.
    - On duplicate warnings: skip if existing is accurate, upsert if outdated, store and
      link if both are distinct.
+
+   ## Expert Routing
+   - dispatch_task routes to experts automatically. If needs_expert is returned, use
+     create_expert with a detailed persona description, then populate the expert namespace.
+   - Lifecycle: promote STM to LTM when stable and reused across sessions.
+   - Link related memories using: parent_child, cross_reference, similar_to, contradicts,
+     elaborates, depends_on.
+
+   ## Session Retrospective
+   - At the end of significant sessions, store a self-evaluation: what went well, what
+     went wrong, lessons learned. Use id "retro-YYYY-MM-DD-topic", category "lesson".
+   - Search past retrospectives before starting similar work to avoid repeating mistakes.
 
 Confirm each file you create and show me the final contents.
 ```
@@ -377,24 +492,37 @@ Set up mcp-vector-memory as my persistent memory system. Do the following:
    args = ["run", "--project", "/path/to/mcp-vector-memory/src/McpVectorMemory"]
 
 2. Create AGENTS.md in the project root with vector memory instructions:
+
+   ## Recall
    - Before starting any task, use search_memory with the project namespace to recall
-     relevant context. Search for past decisions and bugs before answering questions.
+     relevant context. Use hybrid: true for keyword+vector fusion and expandGraph: true
+     to pull in linked memories. Search for past decisions and bugs before answering.
    - Tool selection: search_memory for project context, dispatch_task for cross-domain
      questions (auto-routes to best expert namespace), consult_expert_panel for multiple
      perspectives, deep_recall for archived/forgotten knowledge, detect_duplicates and
      find_contradictions for memory quality.
+
+   ## Store
    - Store memories after completing tasks, fixing bugs, learning patterns, or receiving
      corrections. Use project directory name as namespace, kebab-case IDs, write text
      with domain keywords for future searchability, categorize as: decision, pattern,
      bug-fix, architecture, preference, lesson, reference.
-   - Expert routing: dispatch_task routes to experts automatically. If needs_expert is
-     returned, use create_expert with a detailed persona description, then populate the
-     expert namespace with store_memory.
-   - Lifecycle: new memories start as STM. Promote to LTM when stable and reused across
-     sessions. Link related memories with link_memories using relation types: parent_child,
-     cross_reference, similar_to, contradicts, elaborates, depends_on.
+   - Pre-store quality checks: verify text is self-contained, includes domain keywords,
+     doesn't duplicate existing memories, and has the correct category.
    - On duplicate warnings: skip if existing is accurate, upsert if outdated, store and
      link if both are distinct.
+
+   ## Expert Routing
+   - dispatch_task routes to experts automatically. If needs_expert is returned, use
+     create_expert with a detailed persona description, then populate the expert namespace.
+   - Lifecycle: promote STM to LTM when stable and reused across sessions.
+   - Link related memories using: parent_child, cross_reference, similar_to, contradicts,
+     elaborates, depends_on.
+
+   ## Session Retrospective
+   - At the end of significant sessions, store a self-evaluation: what went well, what
+     went wrong, lessons learned. Use id "retro-YYYY-MM-DD-topic", category "lesson".
+   - Search past retrospectives before starting similar work to avoid repeating mistakes.
 
 Confirm each file you create and show me the final contents.
 ```
@@ -409,30 +537,33 @@ dotnet test
 
 ### Tests
 
-23 test files with 355 test cases covering:
+26 test files with 397 test cases covering:
 
 | Test File | Tests | Focus |
 |-----------|-------|-------|
-| `CognitiveIndexTests.cs` | 39 | Vector search, lifecycle filtering, persistence |
-| `IntelligenceTests.cs` | 37 | Duplicate detection, contradictions, reversible collapse, decay tuning, hash embeddings, persistence |
-| `BenchmarkRunnerTests.cs` | 35 | IR metrics (Recall@K, Precision@K, MRR, nDCG@K), 4 benchmark datasets, ONNX benchmarks |
+| `CognitiveIndexTests.cs` | 43 | Vector search, lifecycle filtering, persistence, memory limits |
+| `BenchmarkRunnerTests.cs` | 42 | IR metrics (Recall@K, Precision@K, MRR, nDCG@K), 4 benchmark datasets, ONNX benchmarks |
+| `IntelligenceTests.cs` | 39 | Duplicate detection, contradictions, reversible collapse, decay tuning, hash embeddings, merge memories |
+| `KnowledgeGraphTests.cs` | 20 | Edge operations, graph traversal, batch edge creation, edge transfer |
 | `CoreMemoryToolsTests.cs` | 20 | Store, search, delete memory tool endpoints |
 | `PhysicsEngineTests.cs` | 19 | Mass computation, gravitational force, slingshot |
 | `AccretionScannerTests.cs` | 18 | DBSCAN clustering, pending collapses |
 | `DebateToolsTests.cs` | 17 | Debate tools: validation, cold-start, expert retrieval, edge creation, resolve lifecycle, full E2E pipeline |
-| `KnowledgeGraphTests.cs` | 17 | Edge operations, graph traversal, batch edge creation |
-| `DebateSessionManagerTests.cs` | 14 | Session management: alias registration, resolution, TTL purge, namespace generation |
-| `ClusterManagerTests.cs` | 14 | Cluster CRUD and centroid operations |
-| `VectorQuantizerTests.cs` | 12 | Int8 quantization, dequantization roundtrip, SIMD dot product, cosine preservation, edge cases |
-| `LifecycleEngineTests.cs` | 12 | State transitions, deep recall, decay cycles |
-| `QuantizedSearchTests.cs` | 9 | Two-stage search pipeline, lifecycle-driven quantization, mixed-state ranking, large namespace accuracy |
-| `FloatArrayBase64ConverterTests.cs` | 9 | Base64 serialization roundtrip, legacy JSON array reading, CognitiveEntry/NamespaceData roundtrip |
-| `PersistenceManagerTests.cs` | 9 | JSON serialization, debounced saves |
-| `RegressionTests.cs` | 9 | Integration and edge-case scenarios |
-| `MetricsCollectorTests.cs` | 8 | Latency recording, percentile computation, timer pattern |
-| `ExpertDispatcherTests.cs` | 15 | Expert creation, routing hits/misses, threshold handling, access tracking, meta-index management |
+| `ClusterManagerTests.cs` | 16 | Cluster CRUD, centroid operations, membership transfer |
+| `SqliteStorageProviderTests.cs` | 15 | SQLite backend: CRUD, persistence, concurrent access, WAL mode |
 | `ExpertToolsTests.cs` | 15 | dispatch_task/create_expert tools: validation, routing pipeline, context retrieval, full E2E workflows |
+| `ExpertDispatcherTests.cs` | 15 | Expert creation, routing hits/misses, threshold handling, access tracking, meta-index management |
+| `DebateSessionManagerTests.cs` | 14 | Session management: alias registration, resolution, TTL purge, namespace generation |
+| `VectorQuantizerTests.cs` | 13 | Int8 quantization, dequantization roundtrip, SIMD dot product, cosine preservation, edge cases |
+| `LifecycleEngineTests.cs` | 12 | State transitions, deep recall, decay cycles |
+| `QueryExpanderTests.cs` | 9 | IDF-based query expansion, term weighting |
+| `RegressionTests.cs` | 9 | Integration and edge-case scenarios |
+| `PersistenceManagerTests.cs` | 9 | JSON serialization, debounced saves, checksums |
+| `FloatArrayBase64ConverterTests.cs` | 9 | Base64 serialization roundtrip, legacy JSON array reading |
+| `QuantizedSearchTests.cs` | 8 | Two-stage search pipeline, lifecycle-driven quantization, mixed-state ranking |
+| `MetricsCollectorTests.cs` | 8 | Latency recording, percentile computation, timer pattern |
 | `MaintenanceToolsTests.cs` | 7 | Rebuild embeddings, compression stats, vector update, metadata preservation |
+| `ChecksumTests.cs` | 7 | SHA-256 persistence checksums, crash recovery |
 | `AccretionToolsTests.cs` | 7 | Accretion tool functionality |
 | `DecayBackgroundServiceTests.cs` | 2 | Background service decay cycles |
 | `AccretionBackgroundServiceTests.cs` | 2 | Background service lifecycle |

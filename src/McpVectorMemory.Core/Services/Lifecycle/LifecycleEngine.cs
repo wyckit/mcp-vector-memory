@@ -1,6 +1,7 @@
 using McpVectorMemory.Core.Models;
+using McpVectorMemory.Core.Services.Storage;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Lifecycle;
 
 /// <summary>
 /// Manages activation energy computation, decay cycles, and lifecycle state transitions.

@@ -1,6 +1,6 @@
 using McpVectorMemory.Core.Models;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Storage;
 
 /// <summary>
 /// Abstraction for data persistence. Implementations handle loading, saving,

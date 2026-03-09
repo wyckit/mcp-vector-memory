@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Evaluation;
 
 /// <summary>
 /// Lightweight metrics collector for operation timing and throughput tracking.

@@ -1,8 +1,10 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using McpVectorMemory.Core.Models;
 using Microsoft.Extensions.Logging;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Storage;
 
 /// <summary>
 /// JSON file-based persistence per namespace with debounced async writes.
@@ -52,6 +54,7 @@ public sealed class PersistenceManager : IStorageProvider
 
     /// <summary>
     /// Load namespace data from disk. Returns empty data if file does not exist or is corrupted.
+    /// Validates checksum if a companion .sha256 file exists.
     /// </summary>
     public NamespaceData LoadNamespace(string ns)
     {
@@ -62,6 +65,10 @@ public sealed class PersistenceManager : IStorageProvider
         try
         {
             var json = File.ReadAllText(path);
+            if (!VerifyChecksum(path, json))
+            {
+                _logger?.LogWarning("Checksum mismatch for namespace '{Namespace}', data may be corrupted", ns);
+            }
             return JsonSerializer.Deserialize<NamespaceData>(json, JsonOptions) ?? new NamespaceData();
         }
         catch (JsonException ex)
@@ -75,84 +82,45 @@ public sealed class PersistenceManager : IStorageProvider
     /// Load global (cross-namespace) edges from disk. Returns empty list if file is corrupted.
     /// </summary>
     public List<GraphEdge> LoadGlobalEdges()
-    {
-        var path = Path.Combine(_basePath, "_edges.json");
-        if (!File.Exists(path))
-            return new();
-
-        try
-        {
-            var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<List<GraphEdge>>(json, JsonOptions) ?? new();
-        }
-        catch (JsonException ex)
-        {
-            _logger?.LogWarning(ex, "Corrupted JSON in edges file, returning empty data");
-            return new();
-        }
-    }
+        => LoadGlobalFile<List<GraphEdge>>(Path.Combine(_basePath, "_edges.json"), "edges") ?? new();
 
     /// <summary>
     /// Load clusters from disk. Returns empty list if file is corrupted.
     /// </summary>
     public List<SemanticCluster> LoadClusters()
-    {
-        var path = Path.Combine(_basePath, "_clusters.json");
-        if (!File.Exists(path))
-            return new();
-
-        try
-        {
-            var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<List<SemanticCluster>>(json, JsonOptions) ?? new();
-        }
-        catch (JsonException ex)
-        {
-            _logger?.LogWarning(ex, "Corrupted JSON in clusters file, returning empty data");
-            return new();
-        }
-    }
+        => LoadGlobalFile<List<SemanticCluster>>(Path.Combine(_basePath, "_clusters.json"), "clusters") ?? new();
 
     /// <summary>
     /// Load collapse history from disk.
     /// </summary>
     public List<CollapseRecord> LoadCollapseHistory()
-    {
-        var path = Path.Combine(_basePath, "_collapse_history.json");
-        if (!File.Exists(path))
-            return new();
-
-        try
-        {
-            var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<List<CollapseRecord>>(json, JsonOptions) ?? new();
-        }
-        catch (JsonException ex)
-        {
-            _logger?.LogWarning(ex, "Corrupted JSON in collapse history file, returning empty data");
-            return new();
-        }
-    }
+        => LoadGlobalFile<List<CollapseRecord>>(Path.Combine(_basePath, "_collapse_history.json"), "collapse history") ?? new();
 
     /// <summary>
     /// Load per-namespace decay configs from disk.
     /// </summary>
     public Dictionary<string, DecayConfig> LoadDecayConfigs()
     {
-        var path = Path.Combine(_basePath, "_decay_configs.json");
+        var list = LoadGlobalFile<List<DecayConfig>>(Path.Combine(_basePath, "_decay_configs.json"), "decay configs");
+        return list?.ToDictionary(c => c.Ns) ?? new();
+    }
+
+    private T? LoadGlobalFile<T>(string path, string label) where T : class
+    {
         if (!File.Exists(path))
-            return new();
+            return null;
 
         try
         {
             var json = File.ReadAllText(path);
-            var list = JsonSerializer.Deserialize<List<DecayConfig>>(json, JsonOptions) ?? new();
-            return list.ToDictionary(c => c.Ns);
+            if (!VerifyChecksum(path, json))
+                _logger?.LogWarning("Checksum mismatch for {Label} file, data may be corrupted", label);
+            return JsonSerializer.Deserialize<T>(json, JsonOptions);
         }
         catch (JsonException ex)
         {
-            _logger?.LogWarning(ex, "Corrupted JSON in decay configs file, returning empty data");
-            return new();
+            _logger?.LogWarning(ex, "Corrupted JSON in {Label} file, returning empty data", label);
+            return null;
         }
     }
 
@@ -482,11 +450,37 @@ public sealed class PersistenceManager : IStorageProvider
         }
     }
 
-    /// <summary>Write to a temp file then rename for crash-safe atomic writes.</summary>
+    /// <summary>Write to a temp file then rename for crash-safe atomic writes. Also writes a SHA-256 checksum companion file.</summary>
     private static void AtomicWriteAllText(string path, string content)
     {
+        var bytes = Encoding.UTF8.GetBytes(content);
         var tmpPath = path + ".tmp";
-        File.WriteAllText(tmpPath, content);
+        File.WriteAllBytes(tmpPath, bytes);
         File.Move(tmpPath, path, overwrite: true);
+
+        // Write checksum companion file (reuse already-encoded bytes)
+        var hash = SHA256.HashData(bytes);
+        var checksumPath = path + ".sha256";
+        File.WriteAllText(checksumPath, Convert.ToHexString(hash));
+    }
+
+    /// <summary>Verify file content against its companion .sha256 checksum file. Returns true if no checksum file exists (legacy data).</summary>
+    private bool VerifyChecksum(string path, string content)
+    {
+        var checksumPath = path + ".sha256";
+        if (!File.Exists(checksumPath))
+            return true; // No checksum = legacy data, pass through
+
+        try
+        {
+            var expected = File.ReadAllText(checksumPath).Trim();
+            var actual = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
+            return string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Error reading checksum file for '{Path}'", path);
+            return true; // Don't block on checksum read errors
+        }
     }
 }

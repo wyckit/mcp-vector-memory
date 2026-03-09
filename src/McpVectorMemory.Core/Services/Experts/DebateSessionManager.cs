@@ -1,4 +1,4 @@
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Experts;
 
 /// <summary>
 /// Volatile in-memory session state for debate panels.

@@ -1,6 +1,10 @@
 using System.ComponentModel;
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Graph;
+using McpVectorMemory.Core.Services.Intelligence;
+using McpVectorMemory.Core.Services.Lifecycle;
+using McpVectorMemory.Core.Services.Retrieval;
 using ModelContextProtocol.Server;
 
 namespace McpVectorMemory.Tools;
@@ -74,6 +78,7 @@ public sealed class IntelligenceTools
         // Part 1: Get explicit contradiction edges from the knowledge graph
         var graphContradictions = _graph.GetContradictions(ns);
         var contradictions = new List<ContradictionInfo>();
+        var knownPairs = new HashSet<(string, string)>();
 
         foreach (var (edge, source, target) in graphContradictions)
         {
@@ -83,16 +88,20 @@ public sealed class IntelligenceTools
             float sim = 0f;
             if (source.Vector.Length == target.Vector.Length)
             {
-                float sourceNorm = CognitiveIndex.Norm(source.Vector);
-                float targetNorm = CognitiveIndex.Norm(target.Vector);
+                float sourceNorm = VectorMath.Norm(source.Vector);
+                float targetNorm = VectorMath.Norm(target.Vector);
                 if (sourceNorm > 0f && targetNorm > 0f)
-                    sim = CognitiveIndex.Dot(source.Vector, target.Vector) / (sourceNorm * targetNorm);
+                    sim = VectorMath.Dot(source.Vector, target.Vector) / (sourceNorm * targetNorm);
             }
 
             contradictions.Add(new ContradictionInfo(
                 new CognitiveEntryInfo(source.Id, source.Text, source.Ns, source.Category, source.LifecycleState),
                 new CognitiveEntryInfo(target.Id, target.Text, target.Ns, target.Category, target.LifecycleState),
                 sim, "graph_edge"));
+
+            // Track both orderings for O(1) dedup
+            knownPairs.Add((source.Id, target.Id));
+            knownPairs.Add((target.Id, source.Id));
         }
         int graphCount = contradictions.Count;
 
@@ -103,29 +112,34 @@ public sealed class IntelligenceTools
             var vector = _embedding.Embed(topic);
             var results = _index.Search(vector, ns, k: 20, minScore: similarityThreshold);
 
-            // Check for pairs among the results that are very similar to each other
-            // but aren't already linked — these are candidates for contradiction review
+            // Pre-resolve all entries and their norms in a single pass (O(N) locks instead of O(N²))
+            var resolved = new (CognitiveEntry? Entry, float Norm)[results.Count];
             for (int i = 0; i < results.Count; i++)
             {
+                var entry = _index.Get(results[i].Id, ns);
+                resolved[i] = (entry, entry is not null ? VectorMath.Norm(entry.Vector) : 0f);
+            }
+
+            // Check for pairs among the results that are very similar to each other
+            for (int i = 0; i < results.Count; i++)
+            {
+                var (a, aNorm) = resolved[i];
+                if (a is null || aNorm == 0f) continue;
+
                 for (int j = i + 1; j < results.Count; j++)
                 {
-                    var a = _index.Get(results[i].Id, ns);
-                    var b = _index.Get(results[j].Id, ns);
-                    if (a is null || b is null) continue;
+                    var (b, bNorm) = resolved[j];
+                    if (b is null || bNorm == 0f) continue;
                     if (a.Vector.Length != b.Vector.Length) continue;
 
-                    float aNorm = CognitiveIndex.Norm(a.Vector);
-                    float bNorm = CognitiveIndex.Norm(b.Vector);
-                    if (aNorm == 0f || bNorm == 0f) continue;
-
-                    float pairSim = CognitiveIndex.Dot(a.Vector, b.Vector) / (aNorm * bNorm);
+                    float pairSim = VectorMath.Dot(a.Vector, b.Vector) / (aNorm * bNorm);
                     if (pairSim < similarityThreshold) continue;
 
                     // Skip if this pair is already in the graph contradictions
-                    bool alreadyKnown = contradictions.Any(c =>
-                        (c.EntryA.Id == a.Id && c.EntryB.Id == b.Id) ||
-                        (c.EntryA.Id == b.Id && c.EntryB.Id == a.Id));
-                    if (alreadyKnown) continue;
+                    if (knownPairs.Contains((a.Id, b.Id))) continue;
+
+                    knownPairs.Add((a.Id, b.Id));
+                    knownPairs.Add((b.Id, a.Id));
 
                     contradictions.Add(new ContradictionInfo(
                         new CognitiveEntryInfo(a.Id, a.Text, a.Ns, a.Category, a.LifecycleState),
@@ -153,5 +167,57 @@ public sealed class IntelligenceTools
         [Description("Namespace to list collapse history for.")] string ns)
     {
         return _scanner.GetCollapseHistory(ns);
+    }
+
+    [McpServerTool(Name = "merge_memories")]
+    [Description("Merge two duplicate memory entries. Keeps the first entry's vector, combines metadata and access counts, transfers graph edges and cluster memberships, and archives the second entry.")]
+    public string MergeMemories(
+        [Description("ID of the entry to keep.")] string keepId,
+        [Description("ID of the duplicate entry to archive.")] string archiveId,
+        [Description("Namespace containing both entries.")] string ns)
+    {
+        var keepEntry = _index.Get(keepId, ns);
+        if (keepEntry is null)
+            return $"Error: Entry '{keepId}' not found in namespace '{ns}'.";
+
+        var archiveEntry = _index.Get(archiveId, ns);
+        if (archiveEntry is null)
+            return $"Error: Entry '{archiveId}' not found in namespace '{ns}'.";
+
+        // Merge metadata: union of keys, keep entry's value wins on conflict
+        var mergedMeta = new Dictionary<string, string>(keepEntry.Metadata ?? new());
+        int metaKeysMerged = 0;
+        if (archiveEntry.Metadata is { Count: > 0 })
+        {
+            foreach (var (key, value) in archiveEntry.Metadata)
+            {
+                if (mergedMeta.TryAdd(key, value))
+                    metaKeysMerged++;
+            }
+        }
+
+        var updated = new CognitiveEntry(
+            keepEntry.Id, keepEntry.Vector, keepEntry.Ns, keepEntry.Text,
+            keepEntry.Category, mergedMeta, keepEntry.LifecycleState,
+            keepEntry.CreatedAt, keepEntry.LastAccessedAt,
+            keepEntry.AccessCount + archiveEntry.AccessCount,
+            keepEntry.ActivationEnergy, keepEntry.IsSummaryNode, keepEntry.SourceClusterId);
+        _index.Upsert(updated);
+
+        // Transfer graph edges from archived entry to kept entry
+        int edgesTransferred = _graph.TransferEdges(archiveId, keepId);
+
+        // Transfer cluster memberships
+        int clustersTransferred = _clusters.TransferMembership(archiveId, keepId);
+
+        // Archive the duplicate via lifecycle engine
+        _lifecycle.PromoteMemory(archiveId, "archived");
+
+        // Add traceability edge
+        _graph.AddEdge(new GraphEdge(keepId, archiveId, "similar_to"));
+
+        return $"Merged '{archiveId}' into '{keepId}'. " +
+               $"Transferred {edgesTransferred} edge(s), {clustersTransferred} cluster(s), " +
+               $"{metaKeysMerged} metadata key(s). Archived '{archiveId}'.";
     }
 }

@@ -1,5 +1,10 @@
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Evaluation;
+using McpVectorMemory.Core.Services.Graph;
+using McpVectorMemory.Core.Services.Intelligence;
+using McpVectorMemory.Core.Services.Retrieval;
+using McpVectorMemory.Core.Services.Storage;
 using McpVectorMemory.Tools;
 
 namespace McpVectorMemory.Tests;
@@ -26,7 +31,7 @@ public class CoreMemoryToolsTests : IDisposable
         _index = new CognitiveIndex(_persistence);
         _graph = new KnowledgeGraph(_persistence, _index);
         _clusters = new ClusterManager(_index, _persistence);
-        _tools = new CoreMemoryTools(_index, new PhysicsEngine(), new StubEmbeddingService(), new MetricsCollector());
+        _tools = new CoreMemoryTools(_index, new PhysicsEngine(), new StubEmbeddingService(), new MetricsCollector(), _graph, new QueryExpander());
     }
 
     public void Dispose()

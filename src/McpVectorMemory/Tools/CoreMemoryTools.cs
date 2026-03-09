@@ -2,6 +2,10 @@ using System.ComponentModel;
 using System.Diagnostics;
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Evaluation;
+using McpVectorMemory.Core.Services.Graph;
+using McpVectorMemory.Core.Services.Intelligence;
+using McpVectorMemory.Core.Services.Retrieval;
 using ModelContextProtocol.Server;
 
 namespace McpVectorMemory.Tools;
@@ -16,13 +20,18 @@ public sealed class CoreMemoryTools
     private readonly PhysicsEngine _physics;
     private readonly IEmbeddingService _embedding;
     private readonly MetricsCollector _metrics;
+    private readonly KnowledgeGraph _graph;
+    private readonly QueryExpander _queryExpander;
 
-    public CoreMemoryTools(CognitiveIndex index, PhysicsEngine physics, IEmbeddingService embedding, MetricsCollector metrics)
+    public CoreMemoryTools(CognitiveIndex index, PhysicsEngine physics, IEmbeddingService embedding,
+        MetricsCollector metrics, KnowledgeGraph graph, QueryExpander queryExpander)
     {
         _index = index;
         _physics = physics;
         _embedding = embedding;
         _metrics = metrics;
+        _graph = graph;
+        _queryExpander = queryExpander;
     }
 
     [McpServerTool(Name = "store_memory")]
@@ -68,7 +77,7 @@ public sealed class CoreMemoryTools
     }
 
     [McpServerTool(Name = "search_memory")]
-    [Description("Namespace-scoped vector similarity search with lifecycle awareness, summary-first mode, and optional physics-based gravity re-ranking (slingshot output). Supports hybrid search (BM25+vector fusion) and token-level reranking. Set explain=true for full retrieval diagnostics.")]
+    [Description("Namespace-scoped vector similarity search with lifecycle awareness, summary-first mode, and optional physics-based gravity re-ranking (slingshot output). Supports hybrid search (BM25+vector fusion), token-level reranking, query expansion (PRF), and graph expansion. Set explain=true for full retrieval diagnostics.")]
     public object SearchMemory(
         [Description("Namespace to search.")] string ns,
         [Description("The original text to search for.")] string? text = null,
@@ -81,7 +90,9 @@ public sealed class CoreMemoryTools
         [Description("When true, return physics-based slingshot output (Asteroid + Sun) instead of flat list.")] bool usePhysics = false,
         [Description("When true, return detailed retrieval explanation with each result (cosine, physics, lifecycle breakdown).")] bool explain = false,
         [Description("When true, use hybrid search combining BM25 keyword matching with vector similarity via Reciprocal Rank Fusion.")] bool hybrid = false,
-        [Description("When true, apply token-level reranking to improve precision on the top results.")] bool rerank = false)
+        [Description("When true, apply token-level reranking to improve precision on the top results.")] bool rerank = false,
+        [Description("When true, use pseudo-relevance feedback to expand the query with terms from top results, improving recall.")] bool expandQuery = false,
+        [Description("When true, include graph-connected neighbors of search results, boosting recall for related memories.")] bool expandGraph = false)
     {
         using var timer = _metrics.StartTimer("search");
 
@@ -115,11 +126,74 @@ public sealed class CoreMemoryTools
             if (rerank && text is not null && results.Count > 1)
                 results = _index.Rerank(text, results);
         }
+
+        // Query expansion via pseudo-relevance feedback: use top results to expand query, then re-search
+        if (expandQuery && text is not null && results.Count >= 2)
+        {
+            var expandedText = _queryExpander.Expand(text, results);
+            if (expandedText != text)
+            {
+                var expandedVector = _embedding.Embed(expandedText);
+                IReadOnlyList<CognitiveSearchResult> expandedResults;
+                if (hybrid)
+                {
+                    expandedResults = _index.HybridSearch(expandedVector, expandedText, ns, k, minScore, category, states, rerank);
+                }
+                else
+                {
+                    expandedResults = _index.Search(expandedVector, ns, k, minScore, category, states, summaryFirst);
+                    if (rerank)
+                        expandedResults = _index.Rerank(expandedText, expandedResults);
+                }
+
+                // Merge: prefer expanded results but keep unique original results
+                var mergedIds = new HashSet<string>();
+                var merged = new List<CognitiveSearchResult>();
+                foreach (var r in expandedResults.Concat(results))
+                {
+                    if (mergedIds.Add(r.Id))
+                        merged.Add(r);
+                }
+                results = merged.Take(k).ToList();
+            }
+        }
+
         searchSw.Stop();
 
         // Side effect: record access for returned entries (namespace-scoped for efficiency)
         foreach (var result in results)
             _index.RecordAccess(result.Id, ns);
+
+        // Graph expansion: pull in neighbors of top results
+        if (expandGraph && results.Count > 0)
+        {
+            var existingIds = results.Select(r => r.Id).ToHashSet();
+            var graphExpanded = new List<CognitiveSearchResult>(results);
+            float lowestScore = results.Min(r => r.Score);
+
+            foreach (var result in results)
+            {
+                var neighbors = _graph.GetNeighbors(result.Id);
+                foreach (var neighbor in neighbors.Neighbors)
+                {
+                    if (existingIds.Contains(neighbor.Entry.Id)) continue;
+                    if (!states.Contains(neighbor.Entry.LifecycleState)) continue;
+                    if (category is not null && neighbor.Entry.Category != category) continue;
+
+                    existingIds.Add(neighbor.Entry.Id);
+
+                    // Graph-expanded results get a discounted score (0.8× lowest result score)
+                    // Use fields from CognitiveEntryInfo directly to avoid N+1 index lookups
+                    graphExpanded.Add(new CognitiveSearchResult(
+                        neighbor.Entry.Id, neighbor.Entry.Text, lowestScore * 0.8f,
+                        neighbor.Entry.LifecycleState, 0f,
+                        neighbor.Entry.Category, null,
+                        false, null, 0));
+                }
+            }
+
+            results = graphExpanded;
+        }
 
         // When usePhysics, apply gravity re-ranking before explain or return
         IReadOnlyList<CognitiveSearchResult> orderedResults = results;

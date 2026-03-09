@@ -1,5 +1,9 @@
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Evaluation;
+using McpVectorMemory.Core.Services.Graph;
+using McpVectorMemory.Core.Services.Retrieval;
+using McpVectorMemory.Core.Services.Storage;
 using McpVectorMemory.Tools;
 
 namespace McpVectorMemory.Tests;
@@ -207,7 +211,8 @@ public class PhysicsEngineTests
         var persistence = new PersistenceManager(testDataPath, debounceMs: 50);
         var index = new CognitiveIndex(persistence);
         var physics = new PhysicsEngine();
-        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService(), new MetricsCollector());
+        var graph = new KnowledgeGraph(persistence, index);
+        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService(), new MetricsCollector(), graph, new QueryExpander());
 
         try
         {
@@ -242,7 +247,8 @@ public class PhysicsEngineTests
         var persistence = new PersistenceManager(testDataPath, debounceMs: 50);
         var index = new CognitiveIndex(persistence);
         var physics = new PhysicsEngine();
-        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService(), new MetricsCollector());
+        var graph = new KnowledgeGraph(persistence, index);
+        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService(), new MetricsCollector(), graph, new QueryExpander());
 
         try
         {
@@ -266,7 +272,8 @@ public class PhysicsEngineTests
         var persistence = new PersistenceManager(testDataPath, debounceMs: 50);
         var index = new CognitiveIndex(persistence);
         var physics = new PhysicsEngine();
-        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService(), new MetricsCollector());
+        var graph = new KnowledgeGraph(persistence, index);
+        var tools = new CoreMemoryTools(index, physics, new StubEmbeddingService(), new MetricsCollector(), graph, new QueryExpander());
 
         try
         {

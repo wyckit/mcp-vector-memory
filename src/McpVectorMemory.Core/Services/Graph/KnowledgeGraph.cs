@@ -1,6 +1,7 @@
 using McpVectorMemory.Core.Models;
+using McpVectorMemory.Core.Services.Storage;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Graph;
 
 /// <summary>
 /// In-memory knowledge graph using adjacency lists for directed edges between cognitive entries.
@@ -319,6 +320,56 @@ public sealed class KnowledgeGraph
             return _outgoing.Values.SelectMany(l => l).ToList();
         }
         finally { _lock.ExitUpgradeableReadLock(); }
+    }
+
+    /// <summary>Transfer all edges from one entry to another (for merge operations). Returns count of edges transferred.</summary>
+    public int TransferEdges(string fromId, string toId)
+    {
+        _lock.EnterWriteLock();
+        try
+        {
+            EnsureLoadedUnderWrite();
+            int transferred = 0;
+
+            // Transfer outgoing edges: fromId -> X becomes toId -> X
+            if (_outgoing.TryGetValue(fromId, out var outEdges))
+            {
+                foreach (var edge in outEdges.ToList())
+                {
+                    // Skip self-referential edges that would result from the transfer
+                    if (edge.TargetId == toId) continue;
+
+                    var newEdge = new GraphEdge(toId, edge.TargetId, edge.Relation, edge.Weight, edge.Metadata);
+                    AddEdgeInternal(newEdge);
+                    transferred++;
+                }
+                // Remove old outgoing list
+                _outgoing.Remove(fromId);
+            }
+
+            // Transfer incoming edges: X -> fromId becomes X -> toId
+            if (_incoming.TryGetValue(fromId, out var inEdges))
+            {
+                foreach (var edge in inEdges.ToList())
+                {
+                    if (edge.SourceId == toId) continue;
+
+                    // Remove the old outgoing reference (X -> fromId) from the source's outgoing list
+                    RemoveMatching(_outgoing, edge.SourceId, e => e.TargetId == fromId && e.Relation == edge.Relation);
+
+                    var newEdge = new GraphEdge(edge.SourceId, toId, edge.Relation, edge.Weight, edge.Metadata);
+                    AddEdgeInternal(newEdge);
+                    transferred++;
+                }
+                _incoming.Remove(fromId);
+            }
+
+            if (transferred > 0)
+                ScheduleSaveEdges();
+
+            return transferred;
+        }
+        finally { _lock.ExitWriteLock(); }
     }
 
     // ── Internals ──

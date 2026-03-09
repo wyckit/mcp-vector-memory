@@ -32,6 +32,7 @@
     <PackageReference Include="FastBertTokenizer" Version="0.4.67" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.17.0" />
     <PackageReference Include="System.Numerics.Tensors" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
   </ItemGroup>
 
 </Project>

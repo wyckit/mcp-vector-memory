@@ -1,4 +1,5 @@
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Evaluation;
 
 namespace McpVectorMemory.Tests;
 

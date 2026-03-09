@@ -8,6 +8,9 @@ namespace McpVectorMemory.Core.Models;
 /// </summary>
 public sealed class NamespaceData
 {
+    [JsonPropertyName("storageVersion")]
+    public int StorageVersion { get; set; } = 1;
+
     [JsonPropertyName("entries")]
     public List<CognitiveEntry> Entries { get; set; } = new();
 }

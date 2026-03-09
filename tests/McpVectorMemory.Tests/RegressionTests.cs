@@ -1,5 +1,11 @@
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Evaluation;
+using McpVectorMemory.Core.Services.Graph;
+using McpVectorMemory.Core.Services.Intelligence;
+using McpVectorMemory.Core.Services.Lifecycle;
+using McpVectorMemory.Core.Services.Retrieval;
+using McpVectorMemory.Core.Services.Storage;
 using McpVectorMemory.Tools;
 
 namespace McpVectorMemory.Tests;
@@ -129,7 +135,7 @@ public class RegressionTests : IDisposable
         _index.Upsert(new CognitiveEntry("b", new[] { 0f, 1f }, "test"));
         _clusters.CreateCluster("c1", "test", new[] { "a", "b" });
 
-        var tools = new CoreMemoryTools(_index, new PhysicsEngine(), new StubEmbeddingService(), new MetricsCollector());
+        var tools = new CoreMemoryTools(_index, new PhysicsEngine(), new StubEmbeddingService(), new MetricsCollector(), _graph, new QueryExpander());
 
         // Run StoreSummary and DeleteMemory concurrently — should not deadlock
         var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));

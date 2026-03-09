@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using McpVectorMemory.Core.Models;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Evaluation;
 
 /// <summary>
 /// Runs benchmark datasets against the cognitive index and computes IR quality metrics

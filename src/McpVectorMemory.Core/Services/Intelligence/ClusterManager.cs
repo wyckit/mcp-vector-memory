@@ -1,6 +1,7 @@
 using McpVectorMemory.Core.Models;
+using McpVectorMemory.Core.Services.Storage;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Intelligence;
 
 /// <summary>
 /// Manages semantic clusters: CRUD operations and centroid computation.
@@ -293,6 +294,51 @@ public sealed class ClusterManager
             ScheduleSaveClusters();
         }
         finally { _lock.ExitWriteLock(); }
+    }
+
+    /// <summary>Transfer cluster memberships from one entry to another (for merge operations). Returns count of clusters affected.</summary>
+    public int TransferMembership(string fromId, string toId)
+    {
+        var affectedClusters = new List<(string clusterId, List<string> memberIds)>();
+
+        _lock.EnterWriteLock();
+        try
+        {
+            EnsureLoadedUnderWrite();
+            foreach (var cluster in _clusters.Values)
+            {
+                if (!cluster.MemberIds.Remove(fromId)) continue;
+
+                if (!cluster.MemberIds.Contains(toId))
+                    cluster.MemberIds.Add(toId);
+
+                affectedClusters.Add((cluster.ClusterId, cluster.MemberIds.ToList()));
+            }
+            if (affectedClusters.Count > 0)
+                ScheduleSaveClusters();
+        }
+        finally { _lock.ExitWriteLock(); }
+
+        // Recompute centroids outside lock
+        if (affectedClusters.Count == 0) return 0;
+
+        var centroids = new List<(string clusterId, float[]? centroid)>();
+        foreach (var (clusterId, memberIds) in affectedClusters)
+            centroids.Add((clusterId, ComputeCentroidFromMembers(memberIds)));
+
+        _lock.EnterWriteLock();
+        try
+        {
+            foreach (var (clusterId, centroid) in centroids)
+            {
+                if (_clusters.TryGetValue(clusterId, out var c))
+                    c.Centroid = centroid;
+            }
+            ScheduleSaveClusters();
+        }
+        finally { _lock.ExitWriteLock(); }
+
+        return affectedClusters.Count;
     }
 
     /// <summary>Get all clusters (for persistence).</summary>

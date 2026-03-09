@@ -1,5 +1,9 @@
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Graph;
+using McpVectorMemory.Core.Services.Intelligence;
+using McpVectorMemory.Core.Services.Lifecycle;
+using McpVectorMemory.Core.Services.Storage;
 
 namespace McpVectorMemory.Tests;
 
@@ -564,5 +568,72 @@ public class IntelligenceTests : IDisposable
         Assert.NotNull(config);
         Assert.Equal(0.42f, config!.DecayRate);
         Assert.Equal(7.0f, config.StmThreshold);
+    }
+
+    // ── Merge Memories (component-level) ──
+
+    [Fact]
+    public void MergeMemories_TransfersEdgesAndClusters()
+    {
+        // Setup: two entries with edges and cluster membership
+        _index.Upsert(new CognitiveEntry("keep", new[] { 1f, 0f, 0f }, "test", "keeper entry"));
+        _index.Upsert(new CognitiveEntry("dup", new[] { 0.99f, 0.01f, 0f }, "test", "duplicate entry"));
+        _index.Upsert(new CognitiveEntry("other", new[] { 0f, 1f, 0f }, "test", "other entry"));
+
+        // Create edges from dup
+        _graph.AddEdge(new GraphEdge("dup", "other", "similar_to"));
+        _graph.AddEdge(new GraphEdge("other", "dup", "depends_on"));
+
+        // Create cluster with dup as member
+        _clusters.CreateCluster("c1", "test", new[] { "dup", "other" });
+
+        // Transfer edges
+        int edgesTransferred = _graph.TransferEdges("dup", "keep");
+        Assert.Equal(2, edgesTransferred);
+
+        // Transfer cluster membership
+        int clustersTransferred = _clusters.TransferMembership("dup", "keep");
+        Assert.Equal(1, clustersTransferred);
+
+        // Archive dup
+        _index.SetLifecycleState("dup", "archived");
+
+        // Verify: keep now has the edges
+        var keepEdges = _graph.GetEdgesForEntry("keep");
+        Assert.True(keepEdges.Count >= 2);
+
+        // Verify: keep is now in the cluster
+        var clusters = _clusters.GetClustersForEntry("keep");
+        Assert.Contains("c1", clusters);
+
+        // Verify: dup is archived
+        var dupEntry = _index.Get("dup", "test");
+        Assert.Equal("archived", dupEntry!.LifecycleState);
+    }
+
+    [Fact]
+    public void MergeMemories_CombinesAccessCounts()
+    {
+        var keepEntry = new CognitiveEntry("keep", new[] { 1f, 0f }, "test", "keeper");
+        keepEntry.AccessCount = 5;
+        var dupEntry = new CognitiveEntry("dup", new[] { 0.99f, 0.01f }, "test", "duplicate");
+        dupEntry.AccessCount = 3;
+
+        _index.Upsert(keepEntry);
+        _index.Upsert(dupEntry);
+
+        // Simulate merge: get entries, combine access counts, upsert updated
+        var keep = _index.Get("keep", "test")!;
+        var dup = _index.Get("dup", "test")!;
+        var merged = new CognitiveEntry(
+            keep.Id, keep.Vector, keep.Ns, keep.Text,
+            keep.Category, keep.Metadata, keep.LifecycleState,
+            keep.CreatedAt, keep.LastAccessedAt,
+            keep.AccessCount + dup.AccessCount,
+            keep.ActivationEnergy, keep.IsSummaryNode, keep.SourceClusterId);
+        _index.Upsert(merged);
+
+        var result = _index.Get("keep", "test");
+        Assert.Equal(8, result!.AccessCount);
     }
 }

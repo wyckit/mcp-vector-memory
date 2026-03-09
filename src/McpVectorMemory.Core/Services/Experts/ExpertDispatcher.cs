@@ -1,6 +1,6 @@
 using McpVectorMemory.Core.Models;
 
-namespace McpVectorMemory.Core.Services;
+namespace McpVectorMemory.Core.Services.Experts;
 
 /// <summary>
 /// Semantic routing engine that maps incoming queries to specialized expert namespaces.

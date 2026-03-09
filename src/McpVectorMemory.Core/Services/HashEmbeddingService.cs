@@ -34,7 +34,7 @@ public sealed class HashEmbeddingService : IEmbeddingService
         }
 
         // Normalize to unit vector (reuse SIMD-accelerated Norm)
-        float norm = CognitiveIndex.Norm(vector);
+        float norm = Retrieval.VectorMath.Norm(vector);
 
         if (norm > 0f)
         {

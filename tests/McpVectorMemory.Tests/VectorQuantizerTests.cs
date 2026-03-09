@@ -1,5 +1,6 @@
 using McpVectorMemory.Core.Models;
 using McpVectorMemory.Core.Services;
+using McpVectorMemory.Core.Services.Retrieval;
 
 namespace McpVectorMemory.Tests;
 
