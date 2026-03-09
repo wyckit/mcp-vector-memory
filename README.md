@@ -362,6 +362,43 @@ Set up mcp-vector-memory as my persistent memory system. Do the following:
 Confirm each file you create and show me the final contents.
 ```
 
+### OpenAI Codex Setup
+
+Open Codex CLI in your project directory and paste:
+
+```
+Set up mcp-vector-memory as my persistent memory system. Do the following:
+
+1. Add the MCP server to my Codex config. Either run:
+   codex mcp add vector-memory -- dotnet run --project /path/to/mcp-vector-memory/src/McpVectorMemory
+   Or add this to ~/.codex/config.toml (or .codex/config.toml for project-scoped):
+   [mcp_servers.vector-memory]
+   command = "dotnet"
+   args = ["run", "--project", "/path/to/mcp-vector-memory/src/McpVectorMemory"]
+
+2. Create AGENTS.md in the project root with vector memory instructions:
+   - Before starting any task, use search_memory with the project namespace to recall
+     relevant context. Search for past decisions and bugs before answering questions.
+   - Tool selection: search_memory for project context, dispatch_task for cross-domain
+     questions (auto-routes to best expert namespace), consult_expert_panel for multiple
+     perspectives, deep_recall for archived/forgotten knowledge, detect_duplicates and
+     find_contradictions for memory quality.
+   - Store memories after completing tasks, fixing bugs, learning patterns, or receiving
+     corrections. Use project directory name as namespace, kebab-case IDs, write text
+     with domain keywords for future searchability, categorize as: decision, pattern,
+     bug-fix, architecture, preference, lesson, reference.
+   - Expert routing: dispatch_task routes to experts automatically. If needs_expert is
+     returned, use create_expert with a detailed persona description, then populate the
+     expert namespace with store_memory.
+   - Lifecycle: new memories start as STM. Promote to LTM when stable and reused across
+     sessions. Link related memories with link_memories using relation types: parent_child,
+     cross_reference, similar_to, contradicts, elaborates, depends_on.
+   - On duplicate warnings: skip if existing is accurate, upsert if outdated, store and
+     link if both are distinct.
+
+Confirm each file you create and show me the final contents.
+```
+
 ## Build & Test
 
 ```bash
