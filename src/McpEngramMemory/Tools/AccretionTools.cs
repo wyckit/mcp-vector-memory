@@ -57,12 +57,14 @@ public sealed class AccretionTools
     }
 
     [McpServerTool(Name = "trigger_accretion_scan")]
-    [Description("Manually trigger an accretion scan for a namespace. Scans LTM-tier entries for dense clusters using DBSCAN.")]
+    [Description("Manually trigger an accretion scan for a namespace. Scans LTM-tier entries for dense clusters using DBSCAN. Set autoSummarize=true to auto-generate cluster summaries (GraphRAG-style) without archiving members.")]
     public AccretionScanResult TriggerAccretionScan(
         [Description("Namespace to scan.")] string ns,
         [Description("DBSCAN distance threshold (default: 0.15). Lower values require tighter clusters.")] float epsilon = 0.15f,
-        [Description("DBSCAN minimum cluster size (default: 3).")] int minPoints = 3)
+        [Description("DBSCAN minimum cluster size (default: 3).")] int minPoints = 3,
+        [Description("Auto-generate extractive summaries for detected clusters without archiving members (default: false).")] bool autoSummarize = false)
     {
-        return _scanner.ScanNamespace(ns, epsilon, minPoints);
+        return _scanner.ScanNamespace(ns, epsilon, minPoints,
+            autoSummarize, autoSummarize ? _clusters : null, autoSummarize ? _embedding : null);
     }
 }

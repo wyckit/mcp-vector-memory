@@ -63,10 +63,11 @@ var mcpBuilder = builder.Services
     .AddMcpServer()
     .WithStdioServerTransport();
 
-// Minimal: core memory operations + admin
+// Minimal: core memory operations + admin + composite tier-1 tools
 mcpBuilder
     .WithTools<CoreMemoryTools>()
-    .WithTools<AdminTools>();
+    .WithTools<AdminTools>()
+    .WithTools<CompositeTools>();
 
 if (toolProfile is "standard" or "full")
 {

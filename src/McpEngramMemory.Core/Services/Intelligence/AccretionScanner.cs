@@ -27,8 +27,13 @@ public sealed class AccretionScanner
 
     /// <summary>
     /// Scan a namespace for dense clusters among LTM-tier entries using DBSCAN.
+    /// When autoSummarize is true, automatically creates clusters and summary entries
+    /// without archiving members (GraphRAG-style hierarchical summaries).
     /// </summary>
-    public AccretionScanResult ScanNamespace(string ns, float epsilon = 0.15f, int minPoints = 3)
+    public AccretionScanResult ScanNamespace(
+        string ns, float epsilon = 0.15f, int minPoints = 3,
+        bool autoSummarize = false, ClusterManager? clusters = null,
+        IEmbeddingService? embedding = null)
     {
         // Get all LTM entries in the namespace (outside _lock — uses _index's own lock)
         var allEntries = _index.GetAllInNamespace(ns);
@@ -46,15 +51,16 @@ public sealed class AccretionScanner
         finally { _lock.ExitReadLock(); }
 
         // Run DBSCAN (pure computation, no locks needed)
-        var clusters = Dbscan(candidates, epsilon, minPoints);
+        var detectedClusters = Dbscan(candidates, epsilon, minPoints);
 
         // Convert clusters to pending collapses
         var newCollapses = new List<PendingCollapseInfo>();
+        var autoSummaries = new List<AutoSummaryInfo>();
 
         _lock.EnterWriteLock();
         try
         {
-            foreach (var cluster in clusters)
+            foreach (var cluster in detectedClusters)
             {
                 var memberIds = cluster.Select(e => e.Id).ToList();
 
@@ -78,7 +84,32 @@ public sealed class AccretionScanner
         }
         finally { _lock.ExitWriteLock(); }
 
-        return new AccretionScanResult(candidates.Count, clusters.Count, newCollapses);
+        // Auto-summarize: create clusters + summaries without archiving members
+        if (autoSummarize && clusters is not null && embedding is not null)
+        {
+            foreach (var cluster in detectedClusters)
+            {
+                var memberIds = cluster.Select(e => e.Id).ToList();
+                var clusterId = $"auto:{ns}:{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}:{autoSummaries.Count}";
+
+                // Check if cluster already exists for these members
+                if (HasExistingCluster(clusters, ns, memberIds))
+                    continue;
+
+                var summaryText = AutoSummarizer.GenerateSummary(cluster);
+                var summaryVector = embedding.Embed(summaryText);
+
+                var createResult = clusters.CreateCluster(clusterId, ns, memberIds, "Auto-summarized");
+                if (createResult.StartsWith("Error:")) continue;
+
+                var summaryId = clusters.StoreSummary(clusterId, summaryText, summaryVector);
+                if (summaryId.StartsWith("Error:")) continue;
+
+                autoSummaries.Add(new AutoSummaryInfo(clusterId, summaryId, memberIds.Count));
+            }
+        }
+
+        return new AccretionScanResult(candidates.Count, detectedClusters.Count, newCollapses, autoSummaries);
     }
 
     /// <summary>Get all pending (non-dismissed) collapses for a namespace.</summary>
@@ -419,6 +450,21 @@ public sealed class AccretionScanner
             centroid[i] /= validCount;
 
         return centroid;
+    }
+
+    /// <summary>Check if a cluster already exists for this set of members.</summary>
+    private static bool HasExistingCluster(ClusterManager clusters, string ns, List<string> memberIds)
+    {
+        var existing = clusters.ListClusters(ns);
+        foreach (var cluster in existing)
+        {
+            var detail = clusters.GetCluster(cluster.ClusterId);
+            if (detail is null) continue;
+            var existingIds = detail.Members.Select(m => m.Id).ToHashSet();
+            if (existingIds.SetEquals(memberIds))
+                return true;
+        }
+        return false;
     }
 
     private bool IsAlreadyPending(List<string> memberIds)

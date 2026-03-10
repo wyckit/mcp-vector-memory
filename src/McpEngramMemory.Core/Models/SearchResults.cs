@@ -165,7 +165,16 @@ public sealed record PendingCollapseInfo(
 public sealed record AccretionScanResult(
     [property: JsonPropertyName("scannedCount")] int ScannedCount,
     [property: JsonPropertyName("clustersDetected")] int ClustersDetected,
-    [property: JsonPropertyName("newCollapses")] IReadOnlyList<PendingCollapseInfo> NewCollapses);
+    [property: JsonPropertyName("newCollapses")] IReadOnlyList<PendingCollapseInfo> NewCollapses,
+    [property: JsonPropertyName("autoSummaries")] IReadOnlyList<AutoSummaryInfo>? AutoSummaries = null);
+
+/// <summary>
+/// Info about an auto-generated cluster summary (GraphRAG-style).
+/// </summary>
+public sealed record AutoSummaryInfo(
+    [property: JsonPropertyName("clusterId")] string ClusterId,
+    [property: JsonPropertyName("summaryId")] string SummaryId,
+    [property: JsonPropertyName("memberCount")] int MemberCount);
 
 /// <summary>
 /// Result of a memory feedback operation.

@@ -2,6 +2,7 @@ using McpEngramMemory.Core.Models;
 using McpEngramMemory.Core.Services;
 using McpEngramMemory.Core.Services.Intelligence;
 using McpEngramMemory.Core.Services.Storage;
+using McpEngramMemory.Core.Services.Lifecycle;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace McpEngramMemory.Tests;
@@ -12,6 +13,8 @@ public class AccretionBackgroundServiceTests : IDisposable
     private readonly PersistenceManager _persistence;
     private readonly CognitiveIndex _index;
     private readonly AccretionScanner _scanner;
+    private readonly ClusterManager _clusters;
+    private readonly HashEmbeddingService _embedding;
 
     public AccretionBackgroundServiceTests()
     {
@@ -19,6 +22,8 @@ public class AccretionBackgroundServiceTests : IDisposable
         _persistence = new PersistenceManager(_testDataPath, debounceMs: 50);
         _index = new CognitiveIndex(_persistence);
         _scanner = new AccretionScanner(_index);
+        _clusters = new ClusterManager(_index, _persistence);
+        _embedding = new HashEmbeddingService();
     }
 
     public void Dispose()
@@ -38,7 +43,7 @@ public class AccretionBackgroundServiceTests : IDisposable
         _index.Upsert(new CognitiveEntry("c", new[] { 0.98f, 0.02f, 0f }, "test", lifecycleState: "ltm"));
         _index.Upsert(new CognitiveEntry("d", new[] { 0.97f, 0.03f, 0f }, "test", lifecycleState: "ltm"));
 
-        var service = new AccretionBackgroundService(_scanner, _index,
+        var service = new AccretionBackgroundService(_scanner, _index, _clusters, _embedding,
             NullLogger<AccretionBackgroundService>.Instance)
         {
             Interval = TimeSpan.FromMilliseconds(50)
@@ -62,7 +67,7 @@ public class AccretionBackgroundServiceTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_StopsOnCancellation()
     {
-        var service = new AccretionBackgroundService(_scanner, _index,
+        var service = new AccretionBackgroundService(_scanner, _index, _clusters, _embedding,
             NullLogger<AccretionBackgroundService>.Instance)
         {
             Interval = TimeSpan.FromMinutes(60)

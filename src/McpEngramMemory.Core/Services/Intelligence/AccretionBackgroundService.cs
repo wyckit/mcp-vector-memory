@@ -11,6 +11,8 @@ public sealed class AccretionBackgroundService : BackgroundService
 {
     private readonly AccretionScanner _scanner;
     private readonly CognitiveIndex _index;
+    private readonly ClusterManager _clusters;
+    private readonly IEmbeddingService _embedding;
     private readonly ILogger<AccretionBackgroundService> _logger;
 
     /// <summary>Default interval between accretion scans.</summary>
@@ -20,10 +22,13 @@ public sealed class AccretionBackgroundService : BackgroundService
     public TimeSpan Interval { get; set; } = DefaultInterval;
 
     public AccretionBackgroundService(
-        AccretionScanner scanner, CognitiveIndex index, ILogger<AccretionBackgroundService> logger)
+        AccretionScanner scanner, CognitiveIndex index, ClusterManager clusters,
+        IEmbeddingService embedding, ILogger<AccretionBackgroundService> logger)
     {
         _scanner = scanner;
         _index = index;
+        _clusters = clusters;
+        _embedding = embedding;
         _logger = logger;
     }
 
@@ -49,7 +54,8 @@ public sealed class AccretionBackgroundService : BackgroundService
 
                 foreach (var ns in namespaces)
                 {
-                    var result = _scanner.ScanNamespace(ns);
+                    var result = _scanner.ScanNamespace(ns,
+                        autoSummarize: true, clusters: _clusters, embedding: _embedding);
                     totalClusters += result.ClustersDetected;
 
                     if (result.NewCollapses.Count > 0)
@@ -57,6 +63,13 @@ public sealed class AccretionBackgroundService : BackgroundService
                         _logger.LogInformation(
                             "Accretion scan: namespace '{Ns}' detected {Clusters} new collapse(s)",
                             ns, result.NewCollapses.Count);
+                    }
+
+                    if (result.AutoSummaries is { Count: > 0 })
+                    {
+                        _logger.LogInformation(
+                            "Auto-summarized {Count} cluster(s) in namespace '{Ns}'",
+                            result.AutoSummaries.Count, ns);
                     }
                 }
 
