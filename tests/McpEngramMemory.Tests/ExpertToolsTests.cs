@@ -190,10 +190,9 @@ public class ExpertToolsTests : IDisposable
         Assert.Equal("created", created.Status);
 
         // Step 2: Seed expert namespace with domain knowledge
-        var v1 = _embedding.Embed("Multi-head attention computes scaled dot-product attention in parallel.");
+        var v1 = _embedding.Embed(persona);
         var v2 = _embedding.Embed("Layer normalization stabilizes training in deep transformer models.");
-        _index.Upsert(new CognitiveEntry("tf-1", v1, "expert_ml_transformers",
-            "Multi-head attention computes scaled dot-product attention in parallel."));
+        _index.Upsert(new CognitiveEntry("tf-1", v1, "expert_ml_transformers", persona));
         _index.Upsert(new CognitiveEntry("tf-2", v2, "expert_ml_transformers",
             "Layer normalization stabilizes training in deep transformer models."));
 

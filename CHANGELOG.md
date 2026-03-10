@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-03-10
+
+### Changed
+- **NuGet Build Optimizations**: Embedded debug `.pdb` symbols internally inside the distributed DLL.
+- **Embedded Sources**: Added embedded source link mapping so consuming code can cleanly step into `McpEngramMemory.Core` logic directly during debug sessions, offering an unparalleled developer experience.
+
+## [0.4.0] - 2026-03-10
+
+### Added
+- **McpEngramMemory.Core NuGet Package**: Split the core memory engine into an independent `net8.0` library, extractable via the `McpEngramMemory.Core.csproj` target build. Allows consumers to integrate the vector index natively in-process without relying on MCP RPC endpoints.
+
 ## [0.3.0] - 2026-03-09
 
 ### Added
