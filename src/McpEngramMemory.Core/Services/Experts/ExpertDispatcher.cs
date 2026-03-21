@@ -399,7 +399,7 @@ public sealed class ExpertDispatcher
         {
             var flatLeaves = allEntries
                 .Where(e => GetLevel(e) == "leaf")
-                .Select(e => EntryToDomainNode(e, 0f))
+                .Select(e => EntryToDomainNode(e, 0f, truncateDescription: true))
                 .ToList();
             return new DomainTreeResult(flatLeaves, flatLeaves.Count, flatLeaves.Count > 0 ? 1 : 0);
         }
@@ -487,16 +487,20 @@ public sealed class ExpertDispatcher
     /// <summary>
     /// Convert a CognitiveEntry to a DomainNode.
     /// </summary>
-    private static DomainNode EntryToDomainNode(CognitiveEntry entry, float score)
+    private static DomainNode EntryToDomainNode(CognitiveEntry entry, float score, bool truncateDescription = false)
     {
         string childNodeIdsStr = entry.Metadata.GetValueOrDefault("childNodeIds") ?? "";
         var childNodeIds = string.IsNullOrEmpty(childNodeIdsStr)
             ? Array.Empty<string>()
             : childNodeIdsStr.Split(',', StringSplitOptions.RemoveEmptyEntries);
 
+        string description = entry.Text ?? "";
+        if (truncateDescription && description.Length > 120)
+            description = string.Concat(description.AsSpan(0, 117), "...");
+
         return new DomainNode(
             entry.Id,
-            entry.Text ?? "",
+            description,
             entry.Metadata.GetValueOrDefault("targetNamespace") ?? $"expert_{entry.Id}",
             GetLevel(entry),
             entry.Metadata.GetValueOrDefault("parentNodeId"),
@@ -508,23 +512,8 @@ public sealed class ExpertDispatcher
     /// <summary>
     /// Build a DomainNode with its full child tree for GetDomainTree().
     /// </summary>
-    private DomainNode BuildTreeNode(CognitiveEntry entry, Dictionary<string, CognitiveEntry> nodeMap)
-    {
-        string childNodeIdsStr = entry.Metadata.GetValueOrDefault("childNodeIds") ?? "";
-        var childNodeIds = string.IsNullOrEmpty(childNodeIdsStr)
-            ? Array.Empty<string>()
-            : childNodeIdsStr.Split(',', StringSplitOptions.RemoveEmptyEntries);
-
-        return new DomainNode(
-            entry.Id,
-            entry.Text ?? "",
-            entry.Metadata.GetValueOrDefault("targetNamespace") ?? $"domain_{entry.Id}",
-            GetLevel(entry),
-            entry.Metadata.GetValueOrDefault("parentNodeId"),
-            childNodeIds,
-            0f,
-            entry.AccessCount);
-    }
+    private static DomainNode BuildTreeNode(CognitiveEntry entry, Dictionary<string, CognitiveEntry> nodeMap)
+        => EntryToDomainNode(entry, 0f, truncateDescription: true);
 
     /// <summary>
     /// Calculate depth of a node in the tree.
