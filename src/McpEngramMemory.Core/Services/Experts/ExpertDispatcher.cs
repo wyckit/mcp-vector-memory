@@ -408,6 +408,48 @@ public sealed class ExpertDispatcher
     }
 
     /// <summary>
+    /// Link an existing expert to a parent node in the domain tree.
+    /// Sets the expert's parentNodeId and level metadata, and updates the parent's childNodeIds.
+    /// </summary>
+    public bool LinkToParent(string expertId, string parentNodeId)
+    {
+        var entry = _index.Get(expertId, SystemNamespace);
+        if (entry is null) return false;
+
+        var parentEntry = _index.Get(parentNodeId, SystemNamespace);
+        if (parentEntry is null) return false;
+
+        // Unlink from previous parent if any
+        var oldParent = entry.Metadata.GetValueOrDefault("parentNodeId");
+        if (oldParent is not null && oldParent != parentNodeId)
+            RemoveChildFromParent(oldParent, expertId);
+
+        entry.Metadata["parentNodeId"] = parentNodeId;
+        entry.Metadata["level"] = "leaf";
+        _index.Upsert(entry);
+
+        AddChildToParent(parentNodeId, expertId);
+        return true;
+    }
+
+    /// <summary>
+    /// Remove a child node ID from a parent's childNodeIds metadata.
+    /// </summary>
+    private void RemoveChildFromParent(string parentNodeId, string childNodeId)
+    {
+        var parentEntry = _index.Get(parentNodeId, SystemNamespace);
+        if (parentEntry is null) return;
+
+        string existing = parentEntry.Metadata.GetValueOrDefault("childNodeIds") ?? "";
+        var childIds = existing.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (childIds.Remove(childNodeId))
+        {
+            parentEntry.Metadata["childNodeIds"] = string.Join(",", childIds);
+            _index.Upsert(parentEntry);
+        }
+    }
+
+    /// <summary>
     /// Get all children of a given parent node from the meta-index.
     /// </summary>
     public IReadOnlyList<CognitiveEntry> GetChildren(string parentNodeId)

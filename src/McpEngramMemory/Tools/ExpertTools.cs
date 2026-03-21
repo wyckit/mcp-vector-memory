@@ -158,6 +158,26 @@ public sealed class ExpertTools
         return new CreateExpertResult("created", expert.ExpertId, expert.TargetNamespace);
     }
 
+    [McpServerTool(Name = "link_to_parent")]
+    [Description("Link an existing leaf expert to a parent node (root or branch) in the domain tree. " +
+        "Use this to organize existing experts into the hierarchical routing topology.")]
+    public object LinkToParent(
+        [Description("The expert ID to link.")] string expertId,
+        [Description("The parent node ID (root or branch) to link under.")] string parentNodeId)
+    {
+        if (string.IsNullOrWhiteSpace(expertId))
+            return "Error: expertId must not be empty.";
+        if (string.IsNullOrWhiteSpace(parentNodeId))
+            return "Error: parentNodeId must not be empty.";
+
+        using var timer = _metrics.StartTimer("link_to_parent");
+
+        if (!_dispatcher.LinkToParent(expertId, parentNodeId))
+            return $"Error: Expert '{expertId}' or parent '{parentNodeId}' not found.";
+
+        return new { status = "linked", expertId, parentNodeId };
+    }
+
     [McpServerTool(Name = "get_domain_tree")]
     [Description("Get the full expert domain tree showing root domains, branches, and leaf experts " +
         "with their hierarchical relationships. Useful for understanding the routing topology.")]
