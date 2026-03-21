@@ -35,11 +35,13 @@ public class InvariantTests : IDisposable
         _jsonPersistence.Dispose();
         _sqlitePersistence.Dispose();
         SqliteConnection.ClearAllPools();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
         if (Directory.Exists(_jsonPath))
             Directory.Delete(_jsonPath, true);
         var sqliteDir = Path.GetDirectoryName(_sqlitePath);
         if (sqliteDir is not null && Directory.Exists(sqliteDir))
-            Directory.Delete(sqliteDir, true);
+            try { Directory.Delete(sqliteDir, true); } catch (IOException) { }
     }
 
     private static CognitiveEntry MakeEntry(string id, string ns = "test",
