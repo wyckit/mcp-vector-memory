@@ -38,13 +38,13 @@ docker run -i -v memory-data:/app/data mcp-engram-memory
 dotnet add package McpEngramMemory.Core --version 0.3.0
 ```
 
-That's it. The server exposes 41 MCP tools. To reduce tool count, set `MEMORY_TOOL_PROFILE`:
+That's it. The server exposes 43 MCP tools. To reduce tool count, set `MEMORY_TOOL_PROFILE`:
 
 | Profile | Tools | Use case |
 |---------|-------|----------|
 | `minimal` | 8 | Core CRUD + admin + composite tools — drop-in memory for any agent |
 | `standard` | 27 | Adds graph, lifecycle, clustering, intelligence |
-| `full` | 41 | Everything including expert routing, debate, benchmarks (default) |
+| `full` | 43 | Everything including expert routing, debate, benchmarks (default) |
 
 ```json
 {
@@ -59,7 +59,7 @@ See [`examples/`](examples/) for ready-to-use config files.
 ```mermaid
 graph TD
     subgraph MCP["MCP Server (stdio)"]
-        Tools["12 Tool Classes<br/>41 MCP Tools"]
+        Tools["12 Tool Classes<br/>43 MCP Tools"]
     end
 
     Tools --> CI["CognitiveIndex<br/><i>Thin facade: CRUD, locking, limits</i>"]
@@ -190,7 +190,7 @@ src/
         PersistenceManager.cs   #   JSON file backend with debounced writes
         SqliteStorageProvider.cs #   SQLite backend with WAL mode
 tests/
-  McpEngramMemory.Tests/        # xUnit tests (484 tests)
+  McpEngramMemory.Tests/        # xUnit tests (525 tests)
 benchmarks/
   baseline-v1.json              # Sprint 1 baseline (2026-03-07)
   baseline-paraphrase-v1.json
@@ -248,7 +248,7 @@ var results = index.Search(queryVector, "default", k: 5);
 - Microsoft.Extensions.Hosting 8.0.1
 - xUnit (tests)
 
-## MCP Tools (41 total)
+## MCP Tools (43 total)
 
 ### Core Memory (3 tools)
 
@@ -299,12 +299,13 @@ Supported relation types: `parent_child`, `cross_reference`, `similar_to`, `cont
 
 Activation energy formula: `(accessCount x reinforcementWeight) - (hoursSinceLastAccess x decayRate)`
 
-### Admin (2 tools)
+### Admin (3 tools)
 
 | Tool | Description |
 |------|-------------|
 | `get_memory` | Retrieve full cognitive context for an entry (lifecycle, edges, clusters). Does not count as an access. |
 | `cognitive_stats` | System overview: entry counts by state, cluster count, edge count, and namespace list. |
+| `purge_debates` | Delete stale `active-debate-*` namespaces older than a configurable age (default: 24 hours). Supports dry-run mode. |
 
 ### Accretion (4 tools)
 
@@ -357,14 +358,17 @@ Five benchmark datasets: four covering generic CS topics (programming languages,
 | `rebuild_embeddings` | Re-embed all entries in one or all namespaces using the current embedding model. Use after upgrading the embedding model to regenerate vectors from stored text. Entries without text are skipped. Preserves all metadata, lifecycle state, and timestamps. |
 | `compression_stats` | Show vector compression statistics for a namespace or all namespaces. Reports FP32 vs Int8 disk savings, quantization coverage, and memory footprint estimates. |
 
-### Expert Routing (2 tools)
+### Expert Routing (3 tools)
 
 | Tool | Description |
 |------|-------------|
-| `dispatch_task` | Route a query to the most relevant expert namespace via semantic similarity against the meta-index. Returns the expert profile and top memories from that namespace as context, or `needs_expert` status if no qualified expert is found. |
-| `create_expert` | Instantiate a new expert namespace and register it in the semantic routing meta-index. The persona description is embedded for future query routing. |
+| `dispatch_task` | Route a query to the most relevant expert namespace via semantic similarity. Supports flat comparison or hierarchical tree routing (`hierarchical=true`) through root → branch → leaf domain nodes. Returns expert profile and context, or `needs_expert` if no match. |
+| `create_expert` | Instantiate a new expert namespace and register it in the semantic routing meta-index. Supports `level` parameter (`root`, `branch`, `leaf`) and `parentNodeId` for hierarchical domain tree construction. |
+| `get_domain_tree` | Show the full hierarchical expert domain tree with root domains, branches, and leaf experts. Useful for understanding the routing topology. |
 
 Expert routing workflow: `dispatch_task` (route query) → if miss: `create_expert` (define specialist) → `dispatch_task` (retry). The system maintains a hidden `_system_experts` meta-index that maps queries to specialized namespaces via cosine similarity (default threshold: 0.75). Experts within a 5% score margin of the top match are returned as candidates.
+
+**Hierarchical routing (HMoE)**: Use `create_expert` with `level="root"` or `level="branch"` to build a domain tree. Set `hierarchical=true` on `dispatch_task` to enable coarse-to-fine tree walk: score roots → narrow to branches → select leaf experts. Falls back to flat routing if no tree exists. All routing uses local ONNX embeddings + SIMD dot products — zero LLM API calls.
 
 ## Architecture
 
@@ -449,7 +453,7 @@ Two storage backends are available, selectable via environment variable:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEMORY_TOOL_PROFILE` | `full` | Tool profile: `minimal` (8 tools), `standard` (27 tools), `full` (41 tools) |
+| `MEMORY_TOOL_PROFILE` | `full` | Tool profile: `minimal` (8 tools), `standard` (27 tools), `full` (43 tools) |
 | `MEMORY_STORAGE` | `json` | Storage backend: `json` or `sqlite` |
 | `MEMORY_SQLITE_PATH` | `data/memory.db` | SQLite database file path (only when `MEMORY_STORAGE=sqlite`) |
 | `MEMORY_MAX_NAMESPACE_SIZE` | unlimited | Maximum entries per namespace |
@@ -801,7 +805,7 @@ dotnet test
 
 ### Tests
 
-33 test files with 484 test cases covering:
+35 test files with 525 test cases covering:
 
 | Test File | Tests | Focus |
 |-----------|-------|-------|
@@ -817,10 +821,12 @@ dotnet test
 | `DebateToolsTests.cs` | 17 | Debate tools: validation, cold-start, expert retrieval, edge creation, resolve lifecycle, full E2E pipeline |
 | `ClusterManagerTests.cs` | 16 | Cluster CRUD, centroid operations, membership transfer |
 | `ExpertToolsTests.cs` | 15 | dispatch_task/create_expert tools: validation, routing pipeline, context retrieval, full E2E workflows |
+| `HierarchicalRoutingTests.cs` | 27 | HMoE domain tree: node creation, parent-child linking, tree walk routing, flat fallback, cross-domain, level filtering, backward compatibility |
 | `ExpertDispatcherTests.cs` | 15 | Expert creation, routing hits/misses, threshold handling, access tracking, meta-index management |
 | `HnswIndexTests.cs` | 14 | HNSW index: add/search/remove, high-dimensional recall, rebuild, edge cases |
 | `DebateSessionManagerTests.cs` | 14 | Session management: alias registration, resolution, TTL purge, namespace generation |
 | `VectorQuantizerTests.cs` | 13 | Int8 quantization, dequantization roundtrip, SIMD dot product, cosine preservation, edge cases |
+| `NamespaceCleanupTests.cs` | 13 | Namespace deletion with cascade (entries, edges, clusters), purge_debates dry-run/delete, JSON and SQLite backends |
 | `CompositeToolsTests.cs` | 12 | Composite tools: remember, recall, reflect — auto-dedup, auto-linking, expert routing |
 | `LifecycleEngineTests.cs` | 12 | State transitions, deep recall, decay cycles |
 | `FeedbackTests.cs` | 11 | Agent feedback: energy boost/suppress, state transitions, access tracking, clamping, cumulative |
