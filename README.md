@@ -35,10 +35,10 @@ docker run -i -v memory-data:/app/data mcp-engram-memory
 **Option 3 — NuGet (embed in your app)**
 
 ```bash
-dotnet add package McpEngramMemory.Core --version 0.5.0
+dotnet add package McpEngramMemory.Core --version 0.5.1
 ```
 
-That's it. The server exposes 43 MCP tools. To reduce tool count, set `MEMORY_TOOL_PROFILE`:
+That's it. The server exposes 44 MCP tools. To reduce tool count, set `MEMORY_TOOL_PROFILE`:
 
 | Profile | Tools | Use case |
 |---------|-------|----------|
@@ -59,7 +59,7 @@ See [`examples/`](examples/) for ready-to-use config files.
 ```mermaid
 graph TD
     subgraph MCP["MCP Server (stdio)"]
-        Tools["12 Tool Classes<br/>43 MCP Tools"]
+        Tools["12 Tool Classes<br/>44 MCP Tools"]
     end
 
     Tools --> CI["CognitiveIndex<br/><i>Thin facade: CRUD, locking, limits</i>"]
@@ -206,7 +206,7 @@ benchmarks/
 The core engine is available as a NuGet package for use in your own .NET applications.
 
 ```bash
-dotnet add package McpEngramMemory.Core --version 0.5.0
+dotnet add package McpEngramMemory.Core --version 0.5.1
 ```
 
 ### Library Usage
@@ -239,7 +239,7 @@ var results = index.Search(queryVector, "default", k: 5);
 
 ## Tech Stack
 
-- .NET 8, C#
+- .NET 8/9/10, C#
 - [ModelContextProtocol](https://www.nuget.org/packages/ModelContextProtocol) 1.0.0
 - [FastBertTokenizer](https://www.nuget.org/packages/FastBertTokenizer) 0.4.67 (WordPiece tokenization)
 - [Microsoft.ML.OnnxRuntime](https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime) 1.17.0 (ONNX model inference)
@@ -358,12 +358,13 @@ Five benchmark datasets: four covering generic CS topics (programming languages,
 | `rebuild_embeddings` | Re-embed all entries in one or all namespaces using the current embedding model. Use after upgrading the embedding model to regenerate vectors from stored text. Entries without text are skipped. Preserves all metadata, lifecycle state, and timestamps. |
 | `compression_stats` | Show vector compression statistics for a namespace or all namespaces. Reports FP32 vs Int8 disk savings, quantization coverage, and memory footprint estimates. |
 
-### Expert Routing (3 tools)
+### Expert Routing (4 tools)
 
 | Tool | Description |
 |------|-------------|
 | `dispatch_task` | Route a query to the most relevant expert namespace via semantic similarity. Supports flat comparison or hierarchical tree routing (`hierarchical=true`) through root → branch → leaf domain nodes. Returns expert profile and context, or `needs_expert` if no match. |
 | `create_expert` | Instantiate a new expert namespace and register it in the semantic routing meta-index. Supports `level` parameter (`root`, `branch`, `leaf`) and `parentNodeId` for hierarchical domain tree construction. **Auto-classifies** leaf experts into the domain tree when `parentNodeId` is omitted — returns `auto_linked`, `suggested`, or `unclassified` placement. |
+| `link_to_parent` | Link an existing leaf expert to a parent node (root or branch) in the domain tree. Use to manually adjust auto-classification placement or organize existing experts into the hierarchy. |
 | `get_domain_tree` | Show the full hierarchical expert domain tree with root domains, branches, and leaf experts. Useful for understanding the routing topology. |
 
 Expert routing workflow: `dispatch_task` (route query) → if miss: `create_expert` (define specialist) → `dispatch_task` (retry). The system maintains a hidden `_system_experts` meta-index that maps queries to specialized namespaces via cosine similarity (default threshold: 0.75). Experts within a 5% score margin of the top match are returned as candidates.
@@ -455,7 +456,7 @@ Two storage backends are available, selectable via environment variable:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEMORY_TOOL_PROFILE` | `full` | Tool profile: `minimal` (8 tools), `standard` (27 tools), `full` (43 tools) |
+| `MEMORY_TOOL_PROFILE` | `full` | Tool profile: `minimal` (8 tools), `standard` (27 tools), `full` (44 tools) |
 | `MEMORY_STORAGE` | `json` | Storage backend: `json` or `sqlite` |
 | `MEMORY_SQLITE_PATH` | `data/memory.db` | SQLite database file path (only when `MEMORY_STORAGE=sqlite`) |
 | `MEMORY_MAX_NAMESPACE_SIZE` | unlimited | Maximum entries per namespace |
@@ -807,7 +808,7 @@ dotnet test
 
 ### Tests
 
-35 test files with 525 test cases covering:
+35 test files with 534 test cases covering:
 
 | Test File | Tests | Focus |
 |-----------|-------|-------|
