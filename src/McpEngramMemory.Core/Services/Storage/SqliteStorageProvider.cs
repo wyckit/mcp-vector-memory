@@ -657,6 +657,17 @@ public sealed class SqliteStorageProvider : IStorageProvider
         }
     }
 
+    /// <summary>Delete all entries in a namespace from the SQLite database.</summary>
+    public async Task DeleteNamespaceAsync(string ns)
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM entries WHERE ns = @ns";
+        cmd.Parameters.AddWithValue("@ns", ns);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
     // ── Flush + Dispose ──
 
     public void Flush()

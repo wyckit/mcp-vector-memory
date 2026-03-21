@@ -36,3 +36,33 @@ public sealed record CreateExpertResult(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("expertId")] string ExpertId,
     [property: JsonPropertyName("targetNamespace")] string TargetNamespace);
+
+/// <summary>
+/// A node in the hierarchical domain tree (root, branch, or leaf).
+/// </summary>
+public sealed record DomainNode(
+    [property: JsonPropertyName("nodeId")] string NodeId,
+    [property: JsonPropertyName("description")] string Description,
+    [property: JsonPropertyName("targetNamespace")] string TargetNamespace,
+    [property: JsonPropertyName("level")] string Level,
+    [property: JsonPropertyName("parentNodeId")] string? ParentNodeId,
+    [property: JsonPropertyName("childNodeIds")] IReadOnlyList<string> ChildNodeIds,
+    [property: JsonPropertyName("score")] float Score,
+    [property: JsonPropertyName("taskCount")] int TaskCount);
+
+/// <summary>
+/// Result of hierarchical routing through the domain tree (root → branch → leaf).
+/// </summary>
+public sealed record HierarchicalRouteResult(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("path")] IReadOnlyList<DomainNode> Path,
+    [property: JsonPropertyName("experts")] IReadOnlyList<ExpertMatch> Experts,
+    [property: JsonPropertyName("context")] IReadOnlyList<CognitiveSearchResult> Context);
+
+/// <summary>
+/// Full domain tree structure showing roots, branches, and leaves.
+/// </summary>
+public sealed record DomainTreeResult(
+    [property: JsonPropertyName("roots")] IReadOnlyList<DomainNode> Roots,
+    [property: JsonPropertyName("totalNodes")] int TotalNodes,
+    [property: JsonPropertyName("maxDepth")] int MaxDepth);

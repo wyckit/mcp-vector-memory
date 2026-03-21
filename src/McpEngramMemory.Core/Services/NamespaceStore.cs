@@ -45,6 +45,20 @@ internal sealed class NamespaceStore
         return entries;
     }
 
+    /// <summary>Remove a namespace entirely from in-memory state (entries, locator, BM25, HNSW, loaded tracking).</summary>
+    public void RemoveNamespace(string ns)
+    {
+        if (_namespaces.TryGetValue(ns, out var entries))
+        {
+            foreach (var id in entries.Keys)
+                _idToNamespace.Remove(id);
+            _namespaces.Remove(ns);
+        }
+        _loadedNamespaces.Remove(ns);
+        _bm25.ClearNamespace(ns);
+        _hnswIndices.Remove(ns);
+    }
+
     /// <summary>All namespace dictionaries (for cross-namespace operations).</summary>
     public IEnumerable<KeyValuePair<string, Dictionary<string, (CognitiveEntry Entry, float Norm, QuantizedVector? Quantized)>>> AllNamespaces
         => _namespaces;

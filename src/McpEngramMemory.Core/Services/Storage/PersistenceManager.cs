@@ -361,6 +361,16 @@ public sealed class PersistenceManager : IStorageProvider
             WriteDecayConfigs(decayConfigProvider);
     }
 
+    /// <summary>Delete all entries in a namespace by removing its JSON and checksum files from disk.</summary>
+    public Task DeleteNamespaceAsync(string ns)
+    {
+        var path = GetNamespacePath(ns);
+        if (File.Exists(path)) File.Delete(path);
+        var checksumPath = path + ".sha256";
+        if (File.Exists(checksumPath)) File.Delete(checksumPath);
+        return Task.CompletedTask;
+    }
+
     public void Dispose()
     {
         lock (_timerLock)

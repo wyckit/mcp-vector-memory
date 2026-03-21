@@ -38,13 +38,13 @@ docker run -i -v memory-data:/app/data mcp-engram-memory
 dotnet add package McpEngramMemory.Core --version 0.3.0
 ```
 
-That's it. The server exposes 38 MCP tools. To reduce tool count, set `MEMORY_TOOL_PROFILE`:
+That's it. The server exposes 41 MCP tools. To reduce tool count, set `MEMORY_TOOL_PROFILE`:
 
 | Profile | Tools | Use case |
 |---------|-------|----------|
-| `minimal` | 5 | Simple store/search — drop-in memory for any agent |
-| `standard` | 18 | Adds graph, lifecycle, clustering, intelligence |
-| `full` | 38 | Everything including expert routing, debate, benchmarks (default) |
+| `minimal` | 8 | Core CRUD + admin + composite tools — drop-in memory for any agent |
+| `standard` | 27 | Adds graph, lifecycle, clustering, intelligence |
+| `full` | 41 | Everything including expert routing, debate, benchmarks (default) |
 
 ```json
 {
@@ -59,7 +59,7 @@ See [`examples/`](examples/) for ready-to-use config files.
 ```mermaid
 graph TD
     subgraph MCP["MCP Server (stdio)"]
-        Tools["11 Tool Classes<br/>38 MCP Tools"]
+        Tools["12 Tool Classes<br/>41 MCP Tools"]
     end
 
     Tools --> CI["CognitiveIndex<br/><i>Thin facade: CRUD, locking, limits</i>"]
@@ -190,7 +190,7 @@ src/
         PersistenceManager.cs   #   JSON file backend with debounced writes
         SqliteStorageProvider.cs #   SQLite backend with WAL mode
 tests/
-  McpEngramMemory.Tests/        # xUnit tests (458 tests)
+  McpEngramMemory.Tests/        # xUnit tests (484 tests)
 benchmarks/
   baseline-v1.json              # Sprint 1 baseline (2026-03-07)
   baseline-paraphrase-v1.json
@@ -248,7 +248,7 @@ var results = index.Search(queryVector, "default", k: 5);
 - Microsoft.Extensions.Hosting 8.0.1
 - xUnit (tests)
 
-## MCP Tools (38 total)
+## MCP Tools (41 total)
 
 ### Core Memory (3 tools)
 
@@ -257,6 +257,14 @@ var results = index.Search(queryVector, "default", k: 5);
 | `store_memory` | Store a vector embedding with text, category, and optional metadata. Defaults to STM lifecycle state. Warns if near-duplicates are detected. |
 | `search_memory` | k-NN search within a namespace with optional lifecycle/category filtering, summary-first mode, physics-based re-ranking, and `explain` mode for full retrieval diagnostics. |
 | `delete_memory` | Remove a memory entry by ID. Cascades to remove associated graph edges and cluster memberships. |
+
+### Composite Tools (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `remember` | Intelligent store: saves a memory with auto-generated embedding, duplicate detection, and auto-linking to related existing memories. Use instead of store_memory + detect_duplicates + link_memories. |
+| `recall` | Intelligent search: searches with auto-routing to the best namespace via expert dispatch, with fallback to direct search. Combines search_memory + dispatch_task in one call. |
+| `reflect` | Store a lesson or retrospective with auto-linking to related memories. Wraps store_memory + link_memories for end-of-session knowledge capture. |
 
 ### Knowledge Graph (4 tools)
 
@@ -441,7 +449,7 @@ Two storage backends are available, selectable via environment variable:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEMORY_TOOL_PROFILE` | `full` | Tool profile: `minimal` (5 tools), `standard` (18 tools), `full` (37 tools) |
+| `MEMORY_TOOL_PROFILE` | `full` | Tool profile: `minimal` (8 tools), `standard` (27 tools), `full` (41 tools) |
 | `MEMORY_STORAGE` | `json` | Storage backend: `json` or `sqlite` |
 | `MEMORY_SQLITE_PATH` | `data/memory.db` | SQLite database file path (only when `MEMORY_STORAGE=sqlite`) |
 | `MEMORY_MAX_NAMESPACE_SIZE` | unlimited | Maximum entries per namespace |
@@ -793,25 +801,30 @@ dotnet test
 
 ### Tests
 
-28 test files with 458 test cases covering:
+33 test files with 484 test cases covering:
 
 | Test File | Tests | Focus |
 |-----------|-------|-------|
+| `BenchmarkRunnerTests.cs` | 47 | IR metrics (Recall@K, Precision@K, MRR, nDCG@K), 5 benchmark datasets, ONNX benchmarks, ablation study |
 | `CognitiveIndexTests.cs` | 43 | Vector search, lifecycle filtering, persistence, memory limits |
-| `BenchmarkRunnerTests.cs` | 46 | IR metrics (Recall@K, Precision@K, MRR, nDCG@K), 5 benchmark datasets, ONNX benchmarks, ablation study |
 | `IntelligenceTests.cs` | 39 | Duplicate detection, contradictions, reversible collapse, decay tuning, hash embeddings, merge memories |
+| `InvariantTests.cs` | 27 | Structural invariants across JSON and SQLite backends |
 | `KnowledgeGraphTests.cs` | 20 | Edge operations, graph traversal, batch edge creation, edge transfer |
 | `CoreMemoryToolsTests.cs` | 20 | Store, search, delete memory tool endpoints |
+| `SqliteStorageProviderTests.cs` | 19 | SQLite backend: CRUD, persistence, concurrent access, WAL mode |
 | `PhysicsEngineTests.cs` | 19 | Mass computation, gravitational force, slingshot |
 | `AccretionScannerTests.cs` | 18 | DBSCAN clustering, pending collapses |
 | `DebateToolsTests.cs` | 17 | Debate tools: validation, cold-start, expert retrieval, edge creation, resolve lifecycle, full E2E pipeline |
 | `ClusterManagerTests.cs` | 16 | Cluster CRUD, centroid operations, membership transfer |
-| `SqliteStorageProviderTests.cs` | 15 | SQLite backend: CRUD, persistence, concurrent access, WAL mode |
 | `ExpertToolsTests.cs` | 15 | dispatch_task/create_expert tools: validation, routing pipeline, context retrieval, full E2E workflows |
 | `ExpertDispatcherTests.cs` | 15 | Expert creation, routing hits/misses, threshold handling, access tracking, meta-index management |
+| `HnswIndexTests.cs` | 14 | HNSW index: add/search/remove, high-dimensional recall, rebuild, edge cases |
 | `DebateSessionManagerTests.cs` | 14 | Session management: alias registration, resolution, TTL purge, namespace generation |
 | `VectorQuantizerTests.cs` | 13 | Int8 quantization, dequantization roundtrip, SIMD dot product, cosine preservation, edge cases |
+| `CompositeToolsTests.cs` | 12 | Composite tools: remember, recall, reflect — auto-dedup, auto-linking, expert routing |
 | `LifecycleEngineTests.cs` | 12 | State transitions, deep recall, decay cycles |
+| `FeedbackTests.cs` | 11 | Agent feedback: energy boost/suppress, state transitions, access tracking, clamping, cumulative |
+| `AutoSummarizerTests.cs` | 9 | Auto-summarization logic and cluster summary generation |
 | `QueryExpanderTests.cs` | 9 | IDF-based query expansion, term weighting |
 | `RegressionTests.cs` | 9 | Integration and edge-case scenarios |
 | `PersistenceManagerTests.cs` | 9 | JSON serialization, debounced saves, checksums |
@@ -821,9 +834,7 @@ dotnet test
 | `MaintenanceToolsTests.cs` | 7 | Rebuild embeddings, compression stats, vector update, metadata preservation |
 | `ChecksumTests.cs` | 7 | SHA-256 persistence checksums, crash recovery |
 | `AccretionToolsTests.cs` | 7 | Accretion tool functionality |
+| `AutoSummarizeIntegrationTests.cs` | 5 | Auto-summarize integration with clustering pipeline |
 | `DecayBackgroundServiceTests.cs` | 2 | Background service decay cycles |
 | `AccretionBackgroundServiceTests.cs` | 2 | Background service lifecycle |
-| `HnswIndexTests.cs` | 13 | HNSW index: add/search/remove, high-dimensional recall, rebuild, edge cases |
-| `FeedbackTests.cs` | 13 | Agent feedback: energy boost/suppress, state transitions, access tracking, clamping, cumulative |
-| `InvariantTests.cs` | 27 | Structural invariants across JSON and SQLite backends |
 | `EmbeddingWarmupServiceTests.cs` | 2 | Embedding warmup startup behavior |

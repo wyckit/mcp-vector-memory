@@ -206,6 +206,7 @@ file sealed class InMemoryStorageProvider : IStorageProvider
     public bool SupportsIncrementalWrites => false;
     public void ScheduleUpsertEntry(string ns, CognitiveEntry entry) { }
     public void ScheduleDeleteEntry(string ns, string entryId) { }
+    public Task DeleteNamespaceAsync(string ns) { _data.Remove(ns); return Task.CompletedTask; }
     public void Flush() { }
     public void Dispose() { }
 }

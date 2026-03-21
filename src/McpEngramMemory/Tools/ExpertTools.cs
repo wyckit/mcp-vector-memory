@@ -11,6 +11,7 @@ namespace McpEngramMemory.Tools;
 /// MCP tools for Expert Instantiation and Semantic Routing.
 /// dispatch_task routes queries to specialized expert namespaces via semantic similarity.
 /// create_expert registers new expert personas in the meta-index.
+/// get_domain_tree shows the hierarchical expert domain tree.
 /// </summary>
 [McpServerToolType]
 public sealed class ExpertTools
@@ -36,12 +37,15 @@ public sealed class ExpertTools
     [Description("Route a query to the most relevant expert namespace via semantic similarity against the meta-index. " +
         "If a qualified expert is found (cosine similarity >= threshold), returns the expert profile and top memories " +
         "from that expert's namespace as context. If no expert qualifies, returns 'needs_expert' status — " +
-        "use create_expert to instantiate a specialist for the domain.")]
+        "use create_expert to instantiate a specialist for the domain. " +
+        "Set hierarchical=true to use coarse-to-fine tree routing through domain nodes (root → branch → leaf).")]
     public object DispatchTask(
         [Description("The core problem, question, or task to route to an expert.")] string taskDescription,
         [Description("How many memories to retrieve from the matched expert's namespace (default: 3).")] int autoSearchK = 3,
         [Description("Minimum cosine similarity threshold for a routing hit (default: 0.75). " +
-            "Lower values match more broadly, higher values require stronger domain alignment.")] float threshold = 0.75f)
+            "Lower values match more broadly, higher values require stronger domain alignment.")] float threshold = 0.75f,
+        [Description("When true, uses hierarchical tree routing (root → branch → leaf) instead of flat comparison. " +
+            "Falls back to flat routing if no domain tree exists. Default: false.")] bool hierarchical = false)
     {
         if (string.IsNullOrWhiteSpace(taskDescription))
             return "Error: taskDescription must not be empty.";
@@ -51,6 +55,15 @@ public sealed class ExpertTools
         using var timer = _metrics.StartTimer("dispatch_task");
 
         var queryVector = _embedding.Embed(taskDescription);
+
+        if (hierarchical)
+        {
+            var result = _dispatcher.RouteHierarchical(queryVector, topK: topK(autoSearchK), threshold: threshold);
+            if (result.Status == "routed" && result.Experts.Count > 0)
+                _dispatcher.RecordDispatch(result.Experts[0].ExpertId);
+            return result;
+        }
+
         var (status, experts) = _dispatcher.Route(queryVector, topK: 3, threshold: threshold);
 
         if (status == "needs_expert")
@@ -69,16 +82,24 @@ public sealed class ExpertTools
             queryVector, bestExpert.TargetNamespace, k: autoSearchK);
 
         return new DispatchRoutedResult("routed", bestExpert, experts, context);
+
+        // Local function to calculate topK for hierarchical routing
+        static int topK(int autoSearchK) => Math.Max(autoSearchK, 3);
     }
 
     [McpServerTool(Name = "create_expert")]
     [Description("Instantiate a new expert namespace and register it in the semantic routing meta-index. " +
         "The persona description is embedded and used for future query routing. " +
-        "Provide a detailed paragraph outlining the expert's domain, principles, and perspective.")]
+        "Provide a detailed paragraph outlining the expert's domain, principles, and perspective. " +
+        "Use level='root' or 'branch' to create domain nodes for hierarchical routing.")]
     public object CreateExpert(
         [Description("Snake_case identifier for the expert (e.g., 'rust_systems_engineer', 'quantum_physicist').")] string expertId,
         [Description("Detailed paragraph describing the expert's domain expertise, specialization, and perspective. " +
-            "This text is embedded and used for semantic matching during dispatch.")] string personaDescription)
+            "This text is embedded and used for semantic matching during dispatch.")] string personaDescription,
+        [Description("Hierarchy level: 'leaf' (default) for actual experts, 'root' for top-level domains, " +
+            "'branch' for mid-level groupings. Root and branch nodes are routing-only domain nodes.")] string level = "leaf",
+        [Description("Parent node ID for branch or leaf nodes to establish tree hierarchy. " +
+            "Required for 'branch' level, optional for 'leaf'.")] string? parentNodeId = null)
     {
         if (string.IsNullOrWhiteSpace(expertId))
             return "Error: expertId must not be empty.";
@@ -90,7 +111,59 @@ public sealed class ExpertTools
         if (_dispatcher.ExpertExists(expertId))
             return $"Error: Expert '{expertId}' already exists. Use a different ID or update the existing expert.";
 
-        var result = _dispatcher.CreateExpert(expertId, personaDescription);
-        return new CreateExpertResult("created", result.ExpertId, result.TargetNamespace);
+        if (level == "root" || level == "branch")
+        {
+            try
+            {
+                var result = _dispatcher.CreateDomainNode(expertId, personaDescription, level, parentNodeId);
+                return new CreateExpertResult("created", result.ExpertId, result.TargetNamespace);
+            }
+            catch (ArgumentException ex)
+            {
+                return $"Error: {ex.Message}";
+            }
+        }
+
+        // Leaf expert — use existing CreateExpert
+        var expert = _dispatcher.CreateExpert(expertId, personaDescription);
+
+        // If parentNodeId is provided, link the leaf to its parent via metadata
+        if (parentNodeId is not null)
+        {
+            var entry = _index.Get(expertId, ExpertDispatcher.SystemNamespace);
+            if (entry is not null)
+            {
+                entry.Metadata["parentNodeId"] = parentNodeId;
+                entry.Metadata["level"] = "leaf";
+                _index.Upsert(entry);
+
+                // Update parent's childNodeIds
+                var parentEntry = _index.Get(parentNodeId, ExpertDispatcher.SystemNamespace);
+                if (parentEntry is not null)
+                {
+                    string existing = parentEntry.Metadata.GetValueOrDefault("childNodeIds") ?? "";
+                    var childIds = string.IsNullOrEmpty(existing)
+                        ? new List<string>()
+                        : existing.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+                    if (!childIds.Contains(expertId))
+                    {
+                        childIds.Add(expertId);
+                        parentEntry.Metadata["childNodeIds"] = string.Join(",", childIds);
+                        _index.Upsert(parentEntry);
+                    }
+                }
+            }
+        }
+
+        return new CreateExpertResult("created", expert.ExpertId, expert.TargetNamespace);
+    }
+
+    [McpServerTool(Name = "get_domain_tree")]
+    [Description("Get the full expert domain tree showing root domains, branches, and leaf experts " +
+        "with their hierarchical relationships. Useful for understanding the routing topology.")]
+    public object GetDomainTree()
+    {
+        using var timer = _metrics.StartTimer("get_domain_tree");
+        return _dispatcher.GetDomainTree();
     }
 }

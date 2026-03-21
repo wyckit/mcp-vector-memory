@@ -34,5 +34,8 @@ public interface IStorageProvider : IDisposable
     Dictionary<string, DecayConfig> LoadDecayConfigs();
     void ScheduleSaveDecayConfigs(Func<Dictionary<string, DecayConfig>> dataProvider);
 
+    /// <summary>Delete all entries in a namespace from the backing store.</summary>
+    Task DeleteNamespaceAsync(string ns);
+
     void Flush();
 }

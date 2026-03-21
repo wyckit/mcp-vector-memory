@@ -424,6 +424,35 @@ public sealed class CognitiveIndex : IDisposable
         finally { _lock.ExitUpgradeableReadLock(); }
     }
 
+    /// <summary>Delete all entries in a namespace and remove it from in-memory state. Does NOT cascade to graph edges or clusters — callers must handle that.</summary>
+    public int DeleteAllInNamespace(string ns)
+    {
+        _lock.EnterWriteLock();
+        try
+        {
+            _store.EnsureLoaded(ns);
+            var nsEntries = _store.GetNamespace(ns);
+            if (nsEntries is null || nsEntries.Count == 0)
+            {
+                _store.RemoveNamespace(ns);
+                return 0;
+            }
+
+            int count = nsEntries.Count;
+            // Delete each entry from BM25 and HNSW indices
+            foreach (var id in nsEntries.Keys.ToList())
+            {
+                _store.RemoveBM25(id, ns);
+                _store.RemoveFromHnsw(ns, id);
+                _store.ScheduleEntryDelete(ns, id);
+            }
+
+            _store.RemoveNamespace(ns);
+            return count;
+        }
+        finally { _lock.ExitWriteLock(); }
+    }
+
     /// <summary>Get all entries across all namespaces.</summary>
     public IReadOnlyList<CognitiveEntry> GetAll()
     {
