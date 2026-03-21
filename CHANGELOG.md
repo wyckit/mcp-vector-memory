@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-03-21
+
+### Added
+- **Hierarchical Expert Routing (HMoE)**: 3-level domain tree (root → branch → leaf) with coarse-to-fine semantic routing via cosine similarity. Supports 2-level and 3-level trees with automatic flat fallback. Zero LLM API calls — all routing uses local ONNX embeddings + SIMD dot products.
+- **`get_domain_tree` tool**: Inspect the full expert hierarchy showing root domains, branches, and leaf experts.
+- **`purge_debates` tool**: Clean up stale `active-debate-*` namespaces older than a configurable age with dry-run support.
+- **Namespace cleanup infrastructure**: `DeleteNamespaceAsync` with cascade removal of entries, graph edges, and cluster memberships across JSON and SQLite backends.
+- **`create_expert` enhancements**: `level` parameter (`root`, `branch`, `leaf`) and `parentNodeId` for hierarchical tree construction.
+- **`dispatch_task` enhancements**: `hierarchical` parameter for tree-walk routing through domain nodes.
+- 40 new tests (27 hierarchical routing + 13 namespace cleanup), bringing total to 525.
+
 ## [0.4.1] - 2026-03-10
 
 ### Changed

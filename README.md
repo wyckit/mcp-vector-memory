@@ -35,7 +35,7 @@ docker run -i -v memory-data:/app/data mcp-engram-memory
 **Option 3 — NuGet (embed in your app)**
 
 ```bash
-dotnet add package McpEngramMemory.Core --version 0.3.0
+dotnet add package McpEngramMemory.Core --version 0.5.0
 ```
 
 That's it. The server exposes 43 MCP tools. To reduce tool count, set `MEMORY_TOOL_PROFILE`:
@@ -206,7 +206,7 @@ benchmarks/
 The core engine is available as a NuGet package for use in your own .NET applications.
 
 ```bash
-dotnet add package McpEngramMemory.Core --version 0.3.0
+dotnet add package McpEngramMemory.Core --version 0.5.0
 ```
 
 ### Library Usage
