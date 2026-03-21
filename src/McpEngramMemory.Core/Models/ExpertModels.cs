@@ -30,12 +30,32 @@ public sealed record DispatchMissResult(
     [property: JsonPropertyName("suggestion")] string Suggestion);
 
 /// <summary>
-/// Result of create_expert tool.
+/// Result of create_expert tool. Includes optional placement info from auto-classification.
 /// </summary>
 public sealed record CreateExpertResult(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("expertId")] string ExpertId,
-    [property: JsonPropertyName("targetNamespace")] string TargetNamespace);
+    [property: JsonPropertyName("targetNamespace")] string TargetNamespace,
+    [property: JsonPropertyName("placement")] PlacementInfo? Placement = null);
+
+/// <summary>
+/// Auto-classification placement result from the domain tree.
+/// Status is "auto_linked" (>= 0.82), "suggested" (0.60–0.82), or "unclassified" (&lt; 0.60).
+/// </summary>
+public sealed record PlacementInfo(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("parentNodeId")] string? ParentNodeId,
+    [property: JsonPropertyName("confidence")] float Confidence,
+    [property: JsonPropertyName("candidates")] IReadOnlyList<PlacementCandidate> Candidates);
+
+/// <summary>
+/// A candidate parent node for expert placement.
+/// </summary>
+public sealed record PlacementCandidate(
+    [property: JsonPropertyName("nodeId")] string NodeId,
+    [property: JsonPropertyName("level")] string Level,
+    [property: JsonPropertyName("description")] string Description,
+    [property: JsonPropertyName("score")] float Score);
 
 /// <summary>
 /// A node in the hierarchical domain tree (root, branch, or leaf).

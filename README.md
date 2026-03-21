@@ -190,7 +190,7 @@ src/
         PersistenceManager.cs   #   JSON file backend with debounced writes
         SqliteStorageProvider.cs #   SQLite backend with WAL mode
 tests/
-  McpEngramMemory.Tests/        # xUnit tests (525 tests)
+  McpEngramMemory.Tests/        # xUnit tests (534 tests)
 benchmarks/
   baseline-v1.json              # Sprint 1 baseline (2026-03-07)
   baseline-paraphrase-v1.json
@@ -363,12 +363,14 @@ Five benchmark datasets: four covering generic CS topics (programming languages,
 | Tool | Description |
 |------|-------------|
 | `dispatch_task` | Route a query to the most relevant expert namespace via semantic similarity. Supports flat comparison or hierarchical tree routing (`hierarchical=true`) through root → branch → leaf domain nodes. Returns expert profile and context, or `needs_expert` if no match. |
-| `create_expert` | Instantiate a new expert namespace and register it in the semantic routing meta-index. Supports `level` parameter (`root`, `branch`, `leaf`) and `parentNodeId` for hierarchical domain tree construction. |
+| `create_expert` | Instantiate a new expert namespace and register it in the semantic routing meta-index. Supports `level` parameter (`root`, `branch`, `leaf`) and `parentNodeId` for hierarchical domain tree construction. **Auto-classifies** leaf experts into the domain tree when `parentNodeId` is omitted — returns `auto_linked`, `suggested`, or `unclassified` placement. |
 | `get_domain_tree` | Show the full hierarchical expert domain tree with root domains, branches, and leaf experts. Useful for understanding the routing topology. |
 
 Expert routing workflow: `dispatch_task` (route query) → if miss: `create_expert` (define specialist) → `dispatch_task` (retry). The system maintains a hidden `_system_experts` meta-index that maps queries to specialized namespaces via cosine similarity (default threshold: 0.75). Experts within a 5% score margin of the top match are returned as candidates.
 
 **Hierarchical routing (HMoE)**: Use `create_expert` with `level="root"` or `level="branch"` to build a domain tree. Set `hierarchical=true` on `dispatch_task` to enable coarse-to-fine tree walk: score roots → narrow to branches → select leaf experts. Falls back to flat routing if no tree exists. All routing uses local ONNX embeddings + SIMD dot products — zero LLM API calls.
+
+**Auto-classification**: When creating a leaf expert without specifying `parentNodeId`, the system automatically scores the persona description against all root and branch nodes to find the best placement. Results: `auto_linked` (>= 0.82 confidence — automatically placed), `suggested` (0.60–0.82 — placed but flagged for review), or `unclassified` (< 0.60 — left as orphan). Use `link_to_parent` to manually adjust placement.
 
 ## Architecture
 
@@ -821,7 +823,7 @@ dotnet test
 | `DebateToolsTests.cs` | 17 | Debate tools: validation, cold-start, expert retrieval, edge creation, resolve lifecycle, full E2E pipeline |
 | `ClusterManagerTests.cs` | 16 | Cluster CRUD, centroid operations, membership transfer |
 | `ExpertToolsTests.cs` | 15 | dispatch_task/create_expert tools: validation, routing pipeline, context retrieval, full E2E workflows |
-| `HierarchicalRoutingTests.cs` | 27 | HMoE domain tree: node creation, parent-child linking, tree walk routing, flat fallback, cross-domain, level filtering, backward compatibility |
+| `HierarchicalRoutingTests.cs` | 36 | HMoE domain tree: node creation, parent-child linking, tree walk routing, flat fallback, cross-domain, level filtering, backward compatibility, auto-classification |
 | `ExpertDispatcherTests.cs` | 15 | Expert creation, routing hits/misses, threshold handling, access tracking, meta-index management |
 | `HnswIndexTests.cs` | 14 | HNSW index: add/search/remove, high-dimensional recall, rebuild, edge cases |
 | `DebateSessionManagerTests.cs` | 14 | Session management: alias registration, resolution, TTL purge, namespace generation |

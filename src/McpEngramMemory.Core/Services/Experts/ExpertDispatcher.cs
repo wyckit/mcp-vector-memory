@@ -26,6 +26,17 @@ public sealed class ExpertDispatcher
     public const float DefaultThreshold = 0.75f;
 
     /// <summary>
+    /// Auto-classification threshold: confidently auto-link to parent at this similarity or above.
+    /// </summary>
+    public const float AutoLinkThreshold = 0.82f;
+
+    /// <summary>
+    /// Auto-classification threshold: suggest (but still link) parent at this similarity or above.
+    /// Below this, the expert is left unclassified.
+    /// </summary>
+    public const float SuggestedThreshold = 0.60f;
+
+    /// <summary>
     /// Experts within this percentage of the top score are included as candidates.
     /// </summary>
     private const float MarginPercent = 0.05f;
@@ -431,6 +442,97 @@ public sealed class ExpertDispatcher
         AddChildToParent(parentNodeId, expertId);
         return true;
     }
+
+    /// <summary>
+    /// Classify a new expert into the domain tree by scoring its persona vector against
+    /// all root and branch nodes. Returns a <see cref="PlacementInfo"/> indicating
+    /// "auto_linked" (>= AutoLinkThreshold), "suggested" (>= SuggestedThreshold),
+    /// or "unclassified" (below SuggestedThreshold). Prefers deeper nodes (branch over root)
+    /// when scores are within 5%.
+    /// </summary>
+    /// <param name="personaVector">Pre-embedded persona description vector.</param>
+    /// <param name="autoLinkThreshold">Override for auto-link threshold (default: 0.82).</param>
+    /// <param name="suggestedThreshold">Override for suggested threshold (default: 0.60).</param>
+    public PlacementInfo ClassifyExpert(
+        float[] personaVector,
+        float autoLinkThreshold = AutoLinkThreshold,
+        float suggestedThreshold = SuggestedThreshold)
+    {
+        var roots = GetNodesByLevel("root");
+        if (roots.Count == 0)
+            return new PlacementInfo("unclassified", null, 0f, Array.Empty<PlacementCandidate>());
+
+        float queryNorm = VectorMath.Norm(personaVector);
+        if (queryNorm == 0f)
+            return new PlacementInfo("unclassified", null, 0f, Array.Empty<PlacementCandidate>());
+
+        // Score all roots
+        var scoredRoots = ScoreEntries(roots, personaVector, queryNorm);
+        if (scoredRoots.Count == 0)
+            return new PlacementInfo("unclassified", null, 0f, Array.Empty<PlacementCandidate>());
+
+        scoredRoots.Sort((a, b) => b.Score.CompareTo(a.Score));
+
+        // Collect all candidates (roots + branches of top-matching roots)
+        var allCandidates = new List<(CognitiveEntry Entry, float Score)>(scoredRoots);
+
+        // Get branches of top-2 roots above suggestedThreshold
+        var matchedRoots = scoredRoots
+            .Where(r => r.Score >= suggestedThreshold)
+            .Take(2)
+            .ToList();
+
+        foreach (var root in matchedRoots)
+        {
+            var children = GetChildren(root.Entry.Id);
+            var branches = children.Where(c => GetLevel(c) == "branch").ToList();
+            if (branches.Count > 0)
+            {
+                var scoredBranches = ScoreEntries(branches, personaVector, queryNorm);
+                allCandidates.AddRange(scoredBranches);
+            }
+        }
+
+        allCandidates.Sort((a, b) => b.Score.CompareTo(a.Score));
+
+        // Pick best parent — prefer branch over root when scores are within 5%
+        var best = allCandidates[0];
+        if (GetLevel(best.Entry) == "root")
+        {
+            foreach (var candidate in allCandidates)
+            {
+                if (GetLevel(candidate.Entry) == "branch" &&
+                    candidate.Score >= best.Score * 0.95f)
+                {
+                    best = candidate;
+                    break;
+                }
+            }
+        }
+
+        // Build top-3 candidates for the response
+        var topCandidates = allCandidates
+            .Take(3)
+            .Select(c => new PlacementCandidate(
+                c.Entry.Id,
+                GetLevel(c.Entry),
+                TruncateText(c.Entry.Text ?? "", 120),
+                c.Score))
+            .ToList();
+
+        float bestScore = best.Score;
+
+        if (bestScore >= autoLinkThreshold)
+            return new PlacementInfo("auto_linked", best.Entry.Id, bestScore, topCandidates);
+
+        if (bestScore >= suggestedThreshold)
+            return new PlacementInfo("suggested", best.Entry.Id, bestScore, topCandidates);
+
+        return new PlacementInfo("unclassified", null, bestScore, topCandidates);
+    }
+
+    private static string TruncateText(string text, int maxLength)
+        => text.Length <= maxLength ? text : string.Concat(text.AsSpan(0, maxLength - 3), "...");
 
     /// <summary>
     /// Remove a child node ID from a parent's childNodeIds metadata.

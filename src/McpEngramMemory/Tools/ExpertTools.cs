@@ -91,7 +91,10 @@ public sealed class ExpertTools
     [Description("Instantiate a new expert namespace and register it in the semantic routing meta-index. " +
         "The persona description is embedded and used for future query routing. " +
         "Provide a detailed paragraph outlining the expert's domain, principles, and perspective. " +
-        "Use level='root' or 'branch' to create domain nodes for hierarchical routing.")]
+        "Use level='root' or 'branch' to create domain nodes for hierarchical routing. " +
+        "When parentNodeId is omitted for leaf experts, auto-classification places the expert " +
+        "into the domain tree: 'auto_linked' (>=0.82 confidence), 'suggested' (0.60-0.82), " +
+        "or 'unclassified' (<0.60). The placement result is included in the response.")]
     public object CreateExpert(
         [Description("Snake_case identifier for the expert (e.g., 'rust_systems_engineer', 'quantum_physicist').")] string expertId,
         [Description("Detailed paragraph describing the expert's domain expertise, specialization, and perspective. " +
@@ -127,35 +130,23 @@ public sealed class ExpertTools
         // Leaf expert — use existing CreateExpert
         var expert = _dispatcher.CreateExpert(expertId, personaDescription);
 
-        // If parentNodeId is provided, link the leaf to its parent via metadata
+        // If parentNodeId is provided, link explicitly (no auto-classification)
         if (parentNodeId is not null)
         {
-            var entry = _index.Get(expertId, ExpertDispatcher.SystemNamespace);
-            if (entry is not null)
-            {
-                entry.Metadata["parentNodeId"] = parentNodeId;
-                entry.Metadata["level"] = "leaf";
-                _index.Upsert(entry);
-
-                // Update parent's childNodeIds
-                var parentEntry = _index.Get(parentNodeId, ExpertDispatcher.SystemNamespace);
-                if (parentEntry is not null)
-                {
-                    string existing = parentEntry.Metadata.GetValueOrDefault("childNodeIds") ?? "";
-                    var childIds = string.IsNullOrEmpty(existing)
-                        ? new List<string>()
-                        : existing.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
-                    if (!childIds.Contains(expertId))
-                    {
-                        childIds.Add(expertId);
-                        parentEntry.Metadata["childNodeIds"] = string.Join(",", childIds);
-                        _index.Upsert(parentEntry);
-                    }
-                }
-            }
+            _dispatcher.LinkToParent(expertId, parentNodeId);
+            return new CreateExpertResult("created", expert.ExpertId, expert.TargetNamespace);
         }
 
-        return new CreateExpertResult("created", expert.ExpertId, expert.TargetNamespace);
+        // Auto-classify into domain tree when no parent specified
+        var personaVector = _embedding.Embed(personaDescription);
+        var placement = _dispatcher.ClassifyExpert(personaVector);
+
+        if (placement.Status is "auto_linked" or "suggested" && placement.ParentNodeId is not null)
+        {
+            _dispatcher.LinkToParent(expertId, placement.ParentNodeId);
+        }
+
+        return new CreateExpertResult("created", expert.ExpertId, expert.TargetNamespace, placement);
     }
 
     [McpServerTool(Name = "link_to_parent")]

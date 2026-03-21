@@ -2,16 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.0] - 2026-03-21
+## [0.5.1] - 2026-03-21
 
 ### Added
 - **Hierarchical Expert Routing (HMoE)**: 3-level domain tree (root → branch → leaf) with coarse-to-fine semantic routing via cosine similarity. Supports 2-level and 3-level trees with automatic flat fallback. Zero LLM API calls — all routing uses local ONNX embeddings + SIMD dot products.
 - **`get_domain_tree` tool**: Inspect the full expert hierarchy showing root domains, branches, and leaf experts.
 - **`purge_debates` tool**: Clean up stale `active-debate-*` namespaces older than a configurable age with dry-run support.
 - **Namespace cleanup infrastructure**: `DeleteNamespaceAsync` with cascade removal of entries, graph edges, and cluster memberships across JSON and SQLite backends.
-- **`create_expert` enhancements**: `level` parameter (`root`, `branch`, `leaf`) and `parentNodeId` for hierarchical tree construction.
+- **`create_expert` enhancements**: `level` parameter (`root`, `branch`, `leaf`) and `parentNodeId` for hierarchical tree construction. **Auto-classification**: when `parentNodeId` is omitted for leaf experts, the system automatically scores the persona against all root and branch nodes and places the expert into the best-matching domain (`auto_linked` >= 0.82, `suggested` 0.60–0.82, `unclassified` < 0.60). Placement result is included in the response.
 - **`dispatch_task` enhancements**: `hierarchical` parameter for tree-walk routing through domain nodes.
-- 40 new tests (27 hierarchical routing + 13 namespace cleanup), bringing total to 525.
+- **`link_to_parent` tool**: Link existing leaf experts to a parent node in the domain tree.
+- 49 new tests (27 hierarchical routing + 9 auto-classification + 13 namespace cleanup), bringing total to 534.
 
 ## [0.4.1] - 2026-03-10
 

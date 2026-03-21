@@ -449,6 +449,181 @@ public class HierarchicalRoutingTests : IDisposable
         index.Dispose();
     }
 
+    // ── ClassifyExpert (auto-classification) ──
+
+    [Fact]
+    public void ClassifyExpert_NoRoots_ReturnsUnclassified()
+    {
+        // No tree exists — should return unclassified
+        var vector = _embedding.Embed("A backend engineer specializing in APIs.");
+        var placement = _dispatcher.ClassifyExpert(vector);
+
+        Assert.Equal("unclassified", placement.Status);
+        Assert.Null(placement.ParentNodeId);
+        Assert.Equal(0f, placement.Confidence);
+        Assert.Empty(placement.Candidates);
+    }
+
+    [Fact]
+    public void ClassifyExpert_MatchingRoot_ReturnsAutoLinked()
+    {
+        // Create root with same text as persona — identical hash vectors → cosine ~1.0
+        string desc = "Backend development with databases and APIs";
+        _dispatcher.CreateDomainNode("engineering", desc, "root");
+
+        var vector = _embedding.Embed(desc);
+        var placement = _dispatcher.ClassifyExpert(vector);
+
+        Assert.Equal("auto_linked", placement.Status);
+        Assert.Equal("engineering", placement.ParentNodeId);
+        Assert.True(placement.Confidence >= ExpertDispatcher.AutoLinkThreshold);
+        Assert.NotEmpty(placement.Candidates);
+    }
+
+    [Fact]
+    public void ClassifyExpert_MatchingBranch_PrefersBranchOverRoot()
+    {
+        // Create root and branch with same text — both score ~1.0 but branch should be preferred
+        string desc = "Backend development with databases and APIs";
+        _dispatcher.CreateDomainNode("engineering", desc, "root");
+        _dispatcher.CreateDomainNode("backend", desc, "branch", "engineering");
+
+        var vector = _embedding.Embed(desc);
+        var placement = _dispatcher.ClassifyExpert(vector);
+
+        Assert.Equal("auto_linked", placement.Status);
+        // Should prefer the branch (deeper node) since scores are within 5%
+        Assert.Equal("backend", placement.ParentNodeId);
+    }
+
+    [Fact]
+    public void ClassifyExpert_LowSimilarity_ReturnsUnclassified()
+    {
+        _dispatcher.CreateDomainNode("engineering", "Software engineering and systems design", "root");
+
+        // Query with very different text — hash embeddings produce low similarity
+        var vector = _embedding.Embed("Quantum entanglement in photonic circuits");
+        var placement = _dispatcher.ClassifyExpert(vector, suggestedThreshold: 0.95f);
+
+        Assert.Equal("unclassified", placement.Status);
+        Assert.Null(placement.ParentNodeId);
+    }
+
+    [Fact]
+    public void ClassifyExpert_MediumSimilarity_ReturnsSuggested()
+    {
+        // Use identical text (cosine ~1.0) but set autoLinkThreshold impossibly high
+        // to force the "suggested" band
+        string desc = "Backend development with databases and APIs";
+        _dispatcher.CreateDomainNode("engineering", desc, "root");
+
+        var vector = _embedding.Embed(desc);
+        var placement = _dispatcher.ClassifyExpert(vector,
+            autoLinkThreshold: 1.1f,    // impossible to reach
+            suggestedThreshold: 0.5f);   // easy to reach
+
+        Assert.Equal("suggested", placement.Status);
+        Assert.Equal("engineering", placement.ParentNodeId);
+        Assert.NotEmpty(placement.Candidates);
+    }
+
+    [Fact]
+    public void ClassifyExpert_ReturnsCandidatesInDescendingOrder()
+    {
+        string desc = "Backend development with databases and APIs";
+        _dispatcher.CreateDomainNode("engineering", desc, "root");
+        _dispatcher.CreateDomainNode("data_science", "Statistical modeling and data analysis", "root");
+
+        var vector = _embedding.Embed(desc);
+        var placement = _dispatcher.ClassifyExpert(vector);
+
+        Assert.NotEmpty(placement.Candidates);
+        // First candidate should be the best match (engineering, identical text)
+        Assert.Equal("engineering", placement.Candidates[0].NodeId);
+    }
+
+    // ── Tool-level auto-classification tests ──
+
+    [Fact]
+    public void CreateExpert_AutoClassifies_WhenNoParentSpecified()
+    {
+        var persistence = new InMemoryStorageProvider();
+        var index = new CognitiveIndex(persistence);
+        var embedding = new HashEmbeddingService(dimensions: 384);
+        var dispatcher = new ExpertDispatcher(index, embedding);
+        var tools = new ExpertTools(dispatcher, index, embedding, new MetricsCollector());
+
+        string desc = "Backend development with databases and APIs";
+        tools.CreateExpert("engineering", desc, level: "root");
+
+        // Create leaf without specifying parentNodeId — should auto-classify
+        var result = tools.CreateExpert("api_dev", desc);
+        var typed = Assert.IsType<CreateExpertResult>(result);
+
+        Assert.Equal("created", typed.Status);
+        Assert.NotNull(typed.Placement);
+        Assert.Equal("auto_linked", typed.Placement!.Status);
+        Assert.Equal("engineering", typed.Placement.ParentNodeId);
+
+        // Verify the leaf is actually linked
+        var entry = index.Get("api_dev", ExpertDispatcher.SystemNamespace);
+        Assert.NotNull(entry);
+        Assert.Equal("leaf", entry!.Metadata["level"]);
+        Assert.Equal("engineering", entry.Metadata["parentNodeId"]);
+        index.Dispose();
+    }
+
+    [Fact]
+    public void CreateExpert_SkipsAutoClassification_WhenParentSpecified()
+    {
+        var persistence = new InMemoryStorageProvider();
+        var index = new CognitiveIndex(persistence);
+        var embedding = new HashEmbeddingService(dimensions: 384);
+        var dispatcher = new ExpertDispatcher(index, embedding);
+        var tools = new ExpertTools(dispatcher, index, embedding, new MetricsCollector());
+
+        tools.CreateExpert("engineering", "Software engineering", level: "root");
+
+        // Create leaf WITH explicit parentNodeId — should NOT auto-classify
+        var result = tools.CreateExpert("go_dev", "A Go developer", parentNodeId: "engineering");
+        var typed = Assert.IsType<CreateExpertResult>(result);
+
+        Assert.Equal("created", typed.Status);
+        // No placement info when parent is explicitly specified
+        Assert.Null(typed.Placement);
+
+        // But leaf should still be linked
+        var entry = index.Get("go_dev", ExpertDispatcher.SystemNamespace);
+        Assert.NotNull(entry);
+        Assert.Equal("engineering", entry!.Metadata["parentNodeId"]);
+        index.Dispose();
+    }
+
+    [Fact]
+    public void CreateExpert_AutoClassifies_Unclassified_WhenNoTree()
+    {
+        var persistence = new InMemoryStorageProvider();
+        var index = new CognitiveIndex(persistence);
+        var embedding = new HashEmbeddingService(dimensions: 384);
+        var dispatcher = new ExpertDispatcher(index, embedding);
+        var tools = new ExpertTools(dispatcher, index, embedding, new MetricsCollector());
+
+        // No tree exists — should return unclassified placement
+        var result = tools.CreateExpert("solo_expert", "A standalone expert.");
+        var typed = Assert.IsType<CreateExpertResult>(result);
+
+        Assert.Equal("created", typed.Status);
+        Assert.NotNull(typed.Placement);
+        Assert.Equal("unclassified", typed.Placement!.Status);
+        Assert.Null(typed.Placement.ParentNodeId);
+
+        // Expert should not be linked to anything
+        var entry = index.Get("solo_expert", ExpertDispatcher.SystemNamespace);
+        Assert.NotNull(entry);
+        Assert.False(entry!.Metadata.ContainsKey("parentNodeId"));
+        index.Dispose();
+    }
+
     [Fact]
     public void GetDomainTree_Tool_ReturnsResult()
     {
